@@ -1,50 +1,64 @@
 "use client";
 
-import { forwardRef, useImperativeHandle, useRef } from "react";
+import { useImperativeHandle, useRef } from "react";
 import {
   ReactSketchCanvas,
   ReactSketchCanvasRef,
   CanvasPath,
 } from "react-sketch-canvas";
 
-interface PaintCanvasProps {
-  onStroke: (stroke: CanvasPath) => void;
-}
-
-// 親から使える関数を定義
 export interface PaintCanvasHandle {
   drawStroke: (stroke: CanvasPath) => void;
-  resetCanvas: () => void;
+  resetCanvas: () => void; // 名前も中身も reset に統一！
+  exportImage: (imageType: "png" | "jpeg") => Promise<string>;
+  exportPaths: () => Promise<CanvasPath[]>;
 }
 
-export const PaintCanvas = forwardRef<PaintCanvasHandle, PaintCanvasProps>(
-  ({ onStroke }, ref) => {
-    const canvasRef = useRef<ReactSketchCanvasRef>(null);
+interface PaintCanvasProps {
+  onDrawEnd: (stroke: CanvasPath) => void;
+  disabled?: boolean;
+  ref?: React.Ref<PaintCanvasHandle>;
+}
 
-    // 親コンポーネントに公開する関数
-    useImperativeHandle(ref, () => ({
-      drawStroke: (stroke: CanvasPath) => {
-        // 自分の線じゃなければ描画する
-        canvasRef.current?.loadPaths([stroke]);
-      },
-      resetCanvas: () => {
-        canvasRef.current?.clearCanvas();
-      },
-    }));
+export const PaintCanvas = ({
+  onDrawEnd,
+  disabled = false,
+  ref,
+}: PaintCanvasProps) => {
+  const canvasHandleRef = useRef<ReactSketchCanvasRef>(null);
 
-    return (
-      <ReactSketchCanvas
-        ref={canvasRef}
-        strokeWidth={4}
-        strokeColor="black"
-        onStroke={(stroke) => {
-          // 線を引き終わったら親にデータを渡す
-          onStroke(stroke);
-        }}
-        style={{ border: "none", width: "100%", height: "500px" }}
-      />
-    );
-  },
-);
+  useImperativeHandle(ref, () => ({
+    drawStroke: (stroke) => {
+      canvasHandleRef.current?.loadPaths([stroke]);
+    },
+    resetCanvas: () => {
+      canvasHandleRef.current?.resetCanvas();
+    },
+    exportImage: (type) => {
+      return (
+        canvasHandleRef.current?.exportImage(type) ??
+        Promise.reject("Not ready")
+      );
+    },
+    exportPaths: () => {
+      return (
+        canvasHandleRef.current?.exportPaths() ?? Promise.reject("Not ready")
+      );
+    },
+  }));
 
-PaintCanvas.displayName = "PaintCanvas";
+  return (
+    <ReactSketchCanvas
+      ref={canvasHandleRef}
+      strokeWidth={4}
+      strokeColor="black"
+      onStroke={(stroke) => onDrawEnd(stroke)}
+      style={{
+        border: "none",
+        width: "100%",
+        height: "500px",
+        pointerEvents: disabled ? "none" : "auto",
+      }}
+    />
+  );
+};
