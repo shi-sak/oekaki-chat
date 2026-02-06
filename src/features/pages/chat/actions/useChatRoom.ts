@@ -174,9 +174,9 @@ export const useChatRoom = (
   };
 
   // 3. ゲーム開始
-  const handleStartGame = async () => {
+  const handleStartGame = async (token: string) => {
     try {
-      await startGame(roomId);
+      await startGame(roomId, token);
     } catch (e) {
       console.error(e);
       alert("開始できませんでした");
@@ -184,7 +184,7 @@ export const useChatRoom = (
   };
 
   // 4. ゲーム終了 & アーカイブ
-  const handleFinishGame = async () => {
+  const handleFinishGame = async (token: string) => {
     if (!canvasHandleRef.current || !confirm("終了してアーカイブしますか？"))
       return;
 
@@ -207,7 +207,7 @@ export const useChatRoom = (
       } = supabase.storage.from("archives").getPublicUrl(imagePath);
 
       // JSON URL は null を渡す
-      await finishGame(roomId, "", imageUrl);
+      await finishGame(roomId, "", imageUrl, token);
     } catch (e) {
       console.error(e);
       alert("終了処理に失敗しました");

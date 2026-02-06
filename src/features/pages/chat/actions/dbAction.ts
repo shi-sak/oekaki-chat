@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@supabase/supabase-js";
+import { verifyTurnstile } from "./verifyTurnstile";
 
 // Server Action (特権管理者) 用のクライアント
 // ※ クライアント側では絶対に使わないこと！
@@ -12,7 +13,12 @@ const adminSupabase = createClient(
 /**
  * ゲーム開始 (30分タイマー始動)
  */
-export async function startGame(roomId: string) {
+export async function startGame(roomId: string, token: string) {
+  //tokenチェック
+  const validation = await verifyTurnstile(token);
+  if (!validation.success) {
+    throw new Error("Bot verification failed");
+  }
   // バリデーション: 既に始まってたら無視するなども可能
   const { error } = await adminSupabase
     .from("rooms")
@@ -33,7 +39,13 @@ export async function finishGame(
   roomId: string,
   jsonUrl: string,
   imageUrl: string,
+  token: string,
 ) {
+  //tokenチェック
+  const validation = await verifyTurnstile(token);
+  if (!validation.success) {
+    throw new Error("Bot verification failed");
+  }
   // 1. 部屋を閉じる & アーカイブ保存
   const { error: roomError } = await adminSupabase
     .from("rooms")

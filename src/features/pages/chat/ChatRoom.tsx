@@ -16,44 +16,44 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
 
   //DB接続時は以下を使用する
 
-  // const {
-  //   roomInfo,
-  //   onlineUsers,
-  //   chatMessages,
-  //   saveStroke,
-  //   sendChatMessage,
-  //   handleStartGame,
-  //   handleFinishGame,
-  // } = useChatRoom(roomId, currentUser, canvasHandleRef);
+  const {
+    roomInfo,
+    onlineUsers,
+    chatMessages,
+    saveStroke,
+    sendChatMessage,
+    handleStartGame,
+    handleFinishGame,
+  } = useChatRoom(roomId, currentUser, canvasHandleRef);
 
   //テスト用 ＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾
-  const roomInfo = {
-    id: 1,
-    name: "テスト部屋",
-    is_active: true, // ★ここを false にすれば「待機画面」もテストできる！
-    session_start_at: new Date().toISOString(),
-    last_session_image_url: "https://placehold.jp/150x150.png", // ダミー画像
-    last_session_json_url: null,
-  };
+  // const roomInfo = {
+  //   id: 1,
+  //   name: "テスト部屋",
+  //   is_active: true, // ★ここを false にすれば「待機画面」もテストできる！
+  //   session_start_at: new Date().toISOString(),
+  //   last_session_image_url: "https://placehold.jp/150x150.png", // ダミー画像
+  //   last_session_json_url: null,
+  // };
 
-  const onlineUsers = [
-    { id: "me", name: "自分" },
-    { id: "other", name: "テストユーザー" },
-  ];
+  // const onlineUsers = [
+  //   { id: "me", name: "自分" },
+  //   { id: "other", name: "テストユーザー" },
+  // ];
 
-  const chatMessages = [
-    {
-      user_name: "テストユーザー",
-      text: "こんにちは！",
-      timestamp: Date.now(),
-    },
-  ];
+  // const chatMessages = [
+  //   {
+  //     user_name: "テストユーザー",
+  //     text: "こんにちは！",
+  //     timestamp: Date.now(),
+  //   },
+  // ];
 
-  // ダミー関数 (コンソールに出すだけ)
-  const saveStroke = (stroke: any) => console.log("描画データ:", stroke);
-  const sendChatMessage = (text: string) => console.log("チャット送信:", text);
-  const handleStartGame = async () => alert("スタートボタンが押されました");
-  const handleFinishGame = async () => alert("終了ボタンが押されました");
+  // // ダミー関数 (コンソールに出すだけ)
+  // const saveStroke = (stroke: any) => console.log("描画データ:", stroke);
+  // const sendChatMessage = (text: string) => console.log("チャット送信:", text);
+  // const handleStartGame = async () => alert("スタートボタンが押されました");
+  // const handleFinishGame = async () => alert("終了ボタンが押されました");
 
   //ここまでテスト用 ＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾
 
