@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { CanvasPath } from "react-sketch-canvas";
+// 🗑️ 削除: import { CanvasPath } from "react-sketch-canvas";
+// ✅ 追加: 新しい型定義
+import { Stroke } from "@/constants/canvas";
+
 // パスは実際の構成に合わせて調整してください
 import { PaintCanvasHandle } from "../components/PaintCanvas";
 import { startGame, finishGame } from "./dbAction";
@@ -61,9 +64,9 @@ export const useChatRoom = (
         .order("created_at", { ascending: true });
 
       if (strokes && canvasHandleRef.current) {
-        // react-sketch-canvas の仕様上、1本ずつ描画するか loadPaths に配列を渡す
+        // Konva版の drawStroke をループで呼ぶ
         strokes.forEach((s) =>
-          canvasHandleRef.current?.drawStroke(s.data as any),
+          canvasHandleRef.current?.drawStroke(s.data as Stroke),
         );
       }
       setIsReady(true);
@@ -85,7 +88,8 @@ export const useChatRoom = (
         (payload) => {
           // 自分が描いた線じゃなければ描画
           if (payload.new.user_id !== user.id) {
-            canvasHandleRef.current?.drawStroke(payload.new.data as any);
+            // ✅ 型アサーションを Stroke に変更
+            canvasHandleRef.current?.drawStroke(payload.new.data as Stroke);
           }
         },
       )
@@ -103,7 +107,7 @@ export const useChatRoom = (
 
           // もし is_active が false になったら（終了したら）、キャンバスをクリア
           if (payload.new.is_active === false) {
-            canvasHandleRef.current?.resetCanvas(); // PaintCanvasの定義と名前を合わせました
+            canvasHandleRef.current?.resetCanvas();
             setChatMessages([]); // チャットもクリア
           }
         },
@@ -115,7 +119,6 @@ export const useChatRoom = (
       // D. 【在室管理】 Presence同期
       .on("presence", { event: "sync" }, () => {
         const state = channel.presenceState();
-        // ★修正: unknownキャストを入れて型エラーを回避
         const users = Object.values(state).flat() as unknown as User[];
         setOnlineUsers(users);
       })
@@ -133,18 +136,19 @@ export const useChatRoom = (
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [roomId, user]); // canvasRefは依存配列に入れない
+  }, [roomId, user]);
 
   // ■ アクション関数
 
   // 1. 線を描いて保存
-  const saveStroke = async (stroke: CanvasPath) => {
+  // ✅ 引数の型を CanvasPath から Stroke に変更
+  const saveStroke = async (stroke: Stroke) => {
     if (!user || !roomInfo?.is_active) return; // 開催中以外は保存しない
 
     // DBに保存
     await supabase.from("strokes").insert({
       room_id: parseInt(roomId),
-      data: stroke,
+      data: stroke, // JSONとしてそのまま入ります
       user_id: user.id,
       user_name: user.name,
     });
@@ -185,33 +189,25 @@ export const useChatRoom = (
       return;
 
     try {
-      // PaintCanvasに追加した exportImage / exportPaths を使用
-      const imageBase64 = await canvasHandleRef.current.exportImage("png");
-      const paths = await canvasHandleRef.current.exportPaths();
+      // ✅ 修正: exportPaths はまだ実装していないので画像保存のみにします
+      // (もしJSONも保存したい場合は PaintCanvas 側に exportStrokes を追加する必要があります)
+      const imageBase64 = await canvasHandleRef.current.exportImage();
 
       const timestamp = Date.now();
       const imagePath = `archives/${roomId}/${timestamp}.png`;
-      const jsonPath = `archives/${roomId}/${timestamp}.json`;
 
       const res = await fetch(imageBase64);
       const blob = await res.blob();
-      const jsonBlob = new Blob([JSON.stringify(paths)], {
-        type: "application/json",
-      });
 
-      await Promise.all([
-        supabase.storage.from("archives").upload(imagePath, blob),
-        supabase.storage.from("archives").upload(jsonPath, jsonBlob),
-      ]);
+      // 画像のみアップロード
+      await supabase.storage.from("archives").upload(imagePath, blob);
 
       const {
         data: { publicUrl: imageUrl },
       } = supabase.storage.from("archives").getPublicUrl(imagePath);
-      const {
-        data: { publicUrl: jsonUrl },
-      } = supabase.storage.from("archives").getPublicUrl(jsonPath);
 
-      await finishGame(roomId, jsonUrl, imageUrl);
+      // JSON URL は null を渡す
+      await finishGame(roomId, "", imageUrl);
     } catch (e) {
       console.error(e);
       alert("終了処理に失敗しました");
