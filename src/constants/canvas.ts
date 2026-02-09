@@ -19,17 +19,22 @@ export type Stroke = {
   points: number[];
   color: string;
   width: number;
-  tool: ToolMode; // ★ここで使う
+  tool: ToolMode;
   layerId: number;
 };
 
-// ★ 2. コンポーネントとフックで共有するProps定義
 export type CommonCanvasProps = {
-  onDrawEnd: (stroke: Stroke) => void;
+  // Context経由で渡すけど、フック側では必要な定義
+  onSaveStroke: (stroke: Stroke) => void;
+  //スポイト用
   onColorPick?: (color: string) => void;
+
+  //色、太さ、アクティブレイヤー、ツール情報
   strokeColor: string;
   strokeWidth: number;
-  toolMode: ToolMode;
   activeLayer: number;
-  disabled: boolean;
+  toolMode: ToolMode;
+
+  // キャンバスは書き込める状態か？
+  disabled?: boolean;
 };

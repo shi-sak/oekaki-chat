@@ -1,7 +1,7 @@
 "use client";
 
 import { RefObject, useState } from "react";
-import { Download } from "lucide-react";
+import { useRoomContext } from "../contexts/RoomContext";
 import { PaintCanvas, PaintCanvasHandle } from "../components/PaintCanvas";
 import { ToolBox } from "../components/ToolBox";
 import { Room } from "../actions/useChatRoom";
@@ -10,19 +10,13 @@ import { Stroke, ToolMode } from "@/constants/canvas"; // ★新しい型定義�
 type Props = {
   canvasHandleRef: RefObject<PaintCanvasHandle | null>;
   roomInfo: Room | null;
-  onStroke: (stroke: Stroke) => void; // ★型をCanvasPathからStrokeに変更
 };
 
-export const CanvasSection = ({
-  canvasHandleRef,
-  roomInfo,
-  onStroke,
-}: Props) => {
+export const CanvasSection = ({ canvasHandleRef, roomInfo }: Props) => {
   const isActive = roomInfo?.is_active;
 
   // ■ ツールの状態管理
   const [color, setColor] = useState("#18181b"); // 初期値: 黒
-  const [width, setWidth] = useState(4);
   const [toolMode, setToolMode] = useState<ToolMode>("pen");
 
   // ★ 変更点1: 太さを別々に管理する
@@ -71,7 +65,6 @@ export const CanvasSection = ({
         <div className="w-full h-full bg-gray-200 cursor-crosshair">
           <PaintCanvas
             ref={canvasHandleRef}
-            onDrawEnd={onStroke}
             onColorPick={handleColorPick}
             disabled={!isActive}
             strokeColor={color}

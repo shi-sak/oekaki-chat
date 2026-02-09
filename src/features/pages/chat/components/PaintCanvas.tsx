@@ -9,28 +9,32 @@ import {
   CommonCanvasProps,
 } from "@/constants/canvas";
 import { useKonva } from "@/features/pages/chat/actions/useKonva";
+import { useRoomContext } from "../contexts/RoomContext";
 
 export interface PaintCanvasHandle {
   drawStroke: (stroke: any) => void;
   resetCanvas: () => void;
-  exportImage: () => Promise<string>;
+  exportImageBlob: () => Promise<Blob | null>; // 画像 (WebP)
+  exportJson: () => string;
+  getStrokeCount: () => number;
 }
 
-type Props = Omit<CommonCanvasProps, "disabled"> & {
-  disabled?: boolean;
+type Props = Omit<CommonCanvasProps, "onSaveStroke"> & {
   ref?: Ref<PaintCanvasHandle>;
 };
 
 export const PaintCanvas = ({
-  onDrawEnd,
+  ref,
   onColorPick,
   strokeColor,
   strokeWidth,
   toolMode,
   activeLayer,
   disabled = false,
-  ref,
 }: Props) => {
+  // 1. Contextから saveStroke を取得
+  const { onSaveStroke } = useRoomContext();
+
   const {
     stageRef,
     lines,
@@ -40,7 +44,7 @@ export const PaintCanvas = ({
     handlers,
     actions,
   } = useKonva({
-    onDrawEnd,
+    onSaveStroke: onSaveStroke,
     onColorPick,
     strokeColor,
     strokeWidth,
@@ -50,12 +54,39 @@ export const PaintCanvas = ({
   });
 
   useImperativeHandle(ref, () => ({
+    //線を引く
     drawStroke: actions.addStroke,
+    //キャンバスリセット
     resetCanvas: actions.resetCanvas,
-    exportImage: actions.exportImage,
+
+    //webpの書き出し(サムネ用)
+    exportImageBlob: async () => {
+      const stage = stageRef.current;
+      if (!stage) return null;
+
+      return new Promise((resolve) => {
+        stage.toBlob({
+          mimeType: "image/webp", // 軽くて綺麗
+          quality: 0.5, // 画質
+          pixelRatio: 1, // 1倍 (高画質保存なら2にする)
+          callback: (blob) => resolve(blob),
+        });
+      });
+    },
+
+    // JSON書き出し
+    exportJson: () => {
+      // useKonva から lines (Stroke配列) を受け取っている前提
+      // もし受け取ってなければ useKonva の return に lines を追加してください
+      return JSON.stringify(lines);
+    },
+
+    //現在のストローク数
+    getStrokeCount: () => lines.length,
   }));
 
   const CIRCLE_CURSOR = `url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='7' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9' fill='%23ffffff' stroke='%23000000' stroke-width='2'/%3E%3C/svg%3E") 12 12, crosshair`;
+
   return (
     <Stage
       ref={stageRef}
@@ -85,7 +116,6 @@ export const PaintCanvas = ({
         clipWidth={CANVAS_WIDTH}
         clipHeight={CANVAS_HEIGHT}
       >
-        {/* 背景の紙 */}
         <Rect
           x={0}
           y={0}
@@ -97,22 +127,18 @@ export const PaintCanvas = ({
           shadowOpacity={0.1}
         />
         {LAYER_RENDER_ORDER.map((layerId) => {
-          // このレイヤーに属する線だけを抽出
           const layerLines = lines.filter((l) => {
             if (layerId === 1) {
-              // レイヤー1は「IDが1」または「古いデータ(undefined)」も含む
               return l.layerId === 1 || !l.layerId;
             }
             return l.layerId === layerId;
           });
 
-          // 今まさにこのレイヤーに描いているか？
           const isDrawingOnThisLayer =
             activeLayer === layerId && currentPoints.length > 0;
 
           return (
             <Group key={layerId}>
-              {/* 1. 確定済みの線 */}
               {layerLines.map((line) => (
                 <Line
                   key={line.id}
@@ -126,7 +152,6 @@ export const PaintCanvas = ({
                 />
               ))}
 
-              {/* 2. 描画中の線 (このレイヤーがアクティブな時だけ表示) */}
               {isDrawingOnThisLayer && (
                 <Line
                   points={currentPoints}
@@ -144,3 +169,5 @@ export const PaintCanvas = ({
     </Stage>
   );
 };
+
+PaintCanvas.displayName = "PaintCanvas";

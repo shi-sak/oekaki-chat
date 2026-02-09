@@ -1,7 +1,9 @@
 "use client";
 
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useMemo } from "react";
 import { useChatRoom, User } from "./actions/useChatRoom";
+
+import { RoomProvider } from "./contexts/RoomContext";
 
 import { PaintCanvasHandle } from "./components/PaintCanvas";
 import { JoinScreen } from "./components/JoinScreen";
@@ -18,13 +20,21 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
 
   const {
     roomInfo,
+    onSaveStroke,
     onlineUsers,
     chatMessages,
-    saveStroke,
     sendChatMessage,
     handleStartGame,
     handleFinishGame,
   } = useChatRoom(roomId, currentUser, canvasHandleRef);
+
+  const roomContextValue = useMemo(
+    () => ({
+      onSaveStroke,
+      isRoomActive: roomInfo?.is_active ?? false,
+    }),
+    [onSaveStroke, roomInfo?.is_active],
+  );
 
   //テスト用 ＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾
   // const roomInfo = {
@@ -50,7 +60,7 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
   // ];
 
   // // ダミー関数 (コンソールに出すだけ)
-  // const saveStroke = (stroke: any) => console.log("描画データ:", stroke);
+  // const onSaveStroke = (stroke: any) => console.log("描画データ:", stroke);
   // const sendChatMessage = (text: string) => console.log("チャット送信:", text);
   // const handleStartGame = async () => alert("スタートボタンが押されました");
   // const handleFinishGame = async () => alert("終了ボタンが押されました");
@@ -76,36 +86,37 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
     return <JoinScreen onJoin={handleJoin} />;
   }
   return (
-    <div className="min-h-screen bg-gray-50 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:20px_20px] p-4">
-      <div className="max-w-7xl mx-auto flex flex-col lg:flex-row gap-6 justify-center">
-        <div className="w-full max-w-5xl flex flex-col gap-4">
-          <RoomHeader
-            roomId={roomId}
-            roomInfo={roomInfo}
-            onStart={handleStartGame}
-            onFinish={handleFinishGame}
+    <RoomProvider value={roomContextValue}>
+      <div className="min-h-screen bg-gray-50 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:20px_20px] p-4">
+        <div className="max-w-7xl mx-auto flex flex-col lg:flex-row gap-6 justify-center">
+          <div className="w-full max-w-5xl flex flex-col gap-4">
+            <RoomHeader
+              roomId={roomId}
+              roomInfo={roomInfo}
+              onStart={handleStartGame}
+              onFinish={handleFinishGame}
+            />
+            <CanvasSection
+              canvasHandleRef={canvasHandleRef}
+              roomInfo={roomInfo}
+            />
+            <div className="hidden lg:block">
+              <Archive roomInfo={roomInfo} />
+            </div>
+          </div>
+
+          {/* サイドパネル */}
+          <SidePanel
+            currentUser={currentUser}
+            onlineUsers={onlineUsers}
+            chatMessages={chatMessages}
+            onSendChat={sendChatMessage}
           />
-          <CanvasSection
-            canvasHandleRef={canvasHandleRef}
-            roomInfo={roomInfo}
-            onStroke={saveStroke}
-          />
-          <div className="hidden lg:block">
+          <div className="block lg:hidden">
             <Archive roomInfo={roomInfo} />
           </div>
         </div>
-
-        {/* サイドパネル */}
-        <SidePanel
-          currentUser={currentUser}
-          onlineUsers={onlineUsers}
-          chatMessages={chatMessages}
-          onSendChat={sendChatMessage}
-        />
-        <div className="block lg:hidden">
-          <Archive roomInfo={roomInfo} />
-        </div>
       </div>
-    </div>
+    </RoomProvider>
   );
 };

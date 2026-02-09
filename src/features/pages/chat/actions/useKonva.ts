@@ -7,7 +7,7 @@ import { Vector2d } from "konva/lib/types";
 import { Stroke, CommonCanvasProps } from "@/constants/canvas";
 
 export const useKonva = ({
-  onDrawEnd,
+  onSaveStroke,
   onColorPick,
   strokeColor,
   strokeWidth,
@@ -78,7 +78,7 @@ export const useKonva = ({
       };
 
       setLines((prev) => [...prev, newStroke]); // ローカル更新
-      onDrawEnd(newStroke); // DB送信
+      onSaveStroke(newStroke); // DB送信
       setCurrentPoints([]); // リセット
     }
   };

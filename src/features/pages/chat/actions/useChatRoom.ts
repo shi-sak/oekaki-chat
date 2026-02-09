@@ -1,12 +1,15 @@
-import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
-// 🗑️ 削除: import { CanvasPath } from "react-sketch-canvas";
-// ✅ 追加: 新しい型定義
+import { useEffect, useState, useRef } from "react";
+import { supabase } from "@/lib/supabase/client";
+
 import { Stroke } from "@/constants/canvas";
 
-// パスは実際の構成に合わせて調整してください
 import { PaintCanvasHandle } from "../components/PaintCanvas";
-import { startGame, finishGame } from "./dbAction";
+import {
+  startGame,
+  finishGame,
+  updateThumbnail,
+  getArchiveUploadUrl,
+} from "./dbAction";
 
 // ■ 型定義
 export type User = {
@@ -20,7 +23,6 @@ export type Room = {
   name: string;
   is_active: boolean;
   session_start_at: string | null;
-  last_session_image_url: string | null;
   last_session_json_url: string | null;
 };
 
@@ -141,8 +143,7 @@ export const useChatRoom = (
   // ■ アクション関数
 
   // 1. 線を描いて保存
-  // ✅ 引数の型を CanvasPath から Stroke に変更
-  const saveStroke = async (stroke: Stroke) => {
+  const onSaveStroke = async (stroke: Stroke) => {
     if (!user || !roomInfo?.is_active) return; // 開催中以外は保存しない
 
     // DBに保存
@@ -189,37 +190,95 @@ export const useChatRoom = (
       return;
 
     try {
-      // ✅ 修正: exportPaths はまだ実装していないので画像保存のみにします
-      // (もしJSONも保存したい場合は PaintCanvas 側に exportStrokes を追加する必要があります)
-      const imageBase64 = await canvasHandleRef.current.exportImage();
+      const jsonString = canvasHandleRef.current.exportJson();
 
-      const timestamp = Date.now();
-      const imagePath = `archives/${roomId}/${timestamp}.png`;
+      // 文字列をBlob化（ファイル化）
+      const blob = new Blob([jsonString], { type: "application/json" });
 
-      const res = await fetch(imageBase64);
-      const blob = await res.blob();
+      // ■ 1. サーバーから「アップロード許可証(URL)」をもらう
+      const { signedUrl, publicUrl } = await getArchiveUploadUrl(roomId, token);
 
-      // 画像のみアップロード
-      await supabase.storage.from("archives").upload(imagePath, blob);
+      // ■ 2. fetch で直接アップロード (PUT送信)
+      const uploadRes = await fetch(signedUrl, {
+        method: "PUT",
+        body: blob, // ここにBlobをそのまま渡してOK
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
 
-      const {
-        data: { publicUrl: imageUrl },
-      } = supabase.storage.from("archives").getPublicUrl(imagePath);
+      if (!uploadRes.ok) {
+        throw new Error(`Upload failed: ${uploadRes.statusText}`);
+      }
 
-      // JSON URL は null を渡す
-      await finishGame(roomId, "", imageUrl, token);
+      // ■ 3. 終了処理 (公開用URLを渡す)
+      await finishGame(roomId, publicUrl, token);
     } catch (e) {
       console.error(e);
       alert("終了処理に失敗しました");
     }
   };
 
+  //以下、サムネイル自動更新
+  const lastUploadedStrokeCountRef = useRef<number>(0);
+
+  useEffect(() => {
+    // 1. 基本ガード
+    if (!roomInfo?.is_active || !user || !canvasHandleRef.current) return;
+
+    // 2. 5分おきのタイマー (300000ms)
+    const intervalId = setInterval(
+      async () => {
+        // --- リーダー選出 (省略なしで書くなら前回の通り) ---
+        if (!onlineUsers || onlineUsers.length === 0) return;
+        const sortedUsers = [...onlineUsers].sort((a, b) =>
+          a.id.localeCompare(b.id),
+        );
+        const isLeader = sortedUsers[0].id === user.id;
+        if (!isLeader) return;
+
+        // --- ★追加: サボり判定 ---
+        const currentCount = canvasHandleRef.current?.getStrokeCount() ?? 0;
+
+        // 前回から線の数が増えてなければ、何もせず終了！ (通信節約)
+        if (currentCount === lastUploadedStrokeCountRef.current) {
+          return;
+        }
+
+        // --- アップロード処理 ---
+        try {
+          const blob = await canvasHandleRef.current?.exportImageBlob();
+          if (!blob) return;
+
+          const fileName = `room_${roomId}.webp`;
+          await supabase.storage.from("thumbnails").upload(fileName, blob, {
+            contentType: "image/webp",
+            upsert: true,
+          });
+
+          // 更新時刻をDBに反映
+          await updateThumbnail(roomId);
+
+          // ★ 成功したら「現在のストローク数」を記録
+          lastUploadedStrokeCountRef.current = currentCount;
+          console.log("📷 サムネ更新完了 (Leader)");
+        } catch (err) {
+          console.error(err);
+        }
+      },
+      5 * 60 * 1000, // 5分間隔
+    );
+
+    return () => clearInterval(intervalId);
+  }, [roomId, user, roomInfo?.is_active, onlineUsers]);
+
+  //おわり
   return {
     isReady,
     roomInfo,
     onlineUsers,
     chatMessages,
-    saveStroke,
+    onSaveStroke,
     sendChatMessage,
     handleStartGame,
     handleFinishGame,
