@@ -1,11 +1,22 @@
 "use client";
 
 import { RefObject, useState } from "react";
-import { useRoomContext } from "../contexts/RoomContext";
-import { PaintCanvas, PaintCanvasHandle } from "../components/PaintCanvas";
+
+import dynamic from "next/dynamic";
+
+import type { PaintCanvasHandle } from "./PaintCanvas";
+// SSR（サーバーサイドレンダリング）を無効化して読み込む
+const PaintCanvas = dynamic(
+  () => import("./PaintCanvas").then((mod) => mod.PaintCanvas),
+  {
+    ssr: false, //サーバーで描画しない
+    loading: () => <div className="h-[600px] bg-gray-200 animate-pulse" />, // ロード中の表示
+  },
+);
+
 import { ToolBox } from "../components/ToolBox";
 import { Room } from "../actions/useChatRoom";
-import { Stroke, ToolMode } from "@/constants/canvas"; // ★新しい型定義をimport
+import { ToolMode } from "@/constants/canvas"; // ★新しい型定義をimport
 
 type Props = {
   canvasHandleRef: RefObject<PaintCanvasHandle | null>;

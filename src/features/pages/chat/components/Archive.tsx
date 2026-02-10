@@ -1,4 +1,4 @@
-import { Download, Image as ImageIcon, Clock, AlertCircle } from "lucide-react";
+import { Download, Image as ImageIcon, Clock } from "lucide-react";
 import { Room } from "../actions/useChatRoom";
 
 type Props = {

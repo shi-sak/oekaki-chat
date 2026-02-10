@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { PenTool, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Turnstile } from "@marsidev/react-turnstile"; // 追加
 import { verifyTurnstile } from "../actions/verifyTurnstile"; // Server Action
 

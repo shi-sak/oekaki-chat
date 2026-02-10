@@ -1,6 +1,3 @@
-// src/components/ResultModal.tsx
-import React from "react";
-
 type Props = {
   imageUrl: string;
   onClose: () => void;

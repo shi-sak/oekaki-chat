@@ -106,8 +106,14 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
 
   // ■ 終了ボタン処理 (ラッパー)
   // RoomHeader から token を受け取って実行します
-  const handleFinishWrapper = async (token: string) => {
-    confirm("終了しますか？");
+  const handleFinishWrapper = async (
+    token: string,
+    isAuto: boolean = false,
+  ) => {
+    // 自動じゃない時だけ確認ダイアログを出す
+    if (!isAuto) {
+      if (!confirm("終了しますか？")) return;
+    }
     if (!canvasHandleRef.current) return;
 
     try {
