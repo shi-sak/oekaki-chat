@@ -1,6 +1,6 @@
 "use client";
 
-import { useImperativeHandle, Ref } from "react";
+import { useImperativeHandle, Ref, useRef } from "react";
 import { Stage, Layer, Line, Rect, Group } from "react-konva";
 import {
   CANVAS_WIDTH,
@@ -32,6 +32,8 @@ export const PaintCanvas = ({
   disabled = false,
 }: Props) => {
   const { onSaveStroke } = useRoomContext();
+  //
+  const isDrawingRef = useRef(false);
 
   const {
     stageRef,
@@ -57,6 +59,11 @@ export const PaintCanvas = ({
     getStrokeCount: () => lines.length,
 
     exportImageBlob: async (type: "png" | "webp" = "webp") => {
+      //線を引いてる最中なら待つ
+      while (isDrawingRef.current) {
+        // 100ms 待ってから再チェック (ポーリング)
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
       const stage = stageRef.current;
       if (!stage) return null;
 
@@ -99,6 +106,17 @@ export const PaintCanvas = ({
 
   const CIRCLE_CURSOR = `url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='7' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9' fill='%23ffffff' stroke='%23000000' stroke-width='2'/%3E%3C/svg%3E") 12 12, crosshair`;
 
+  // ★ 2. イベントハンドラをラップして、フラグをON/OFFする
+  const handleMouseDownWrapped = (e: any) => {
+    isDrawingRef.current = true; // 描き始めフラグON
+    handlers.handleMouseDown(e);
+  };
+
+  const handleMouseUpWrapped = () => {
+    isDrawingRef.current = false; // 描き終わりフラグOFF
+    handlers.handleMouseUp();
+  };
+
   return (
     <Stage
       ref={stageRef}
@@ -110,12 +128,12 @@ export const PaintCanvas = ({
       scaleY={stageScale}
       x={stagePos.x}
       y={stagePos.y}
-      onMouseDown={handlers.handleMouseDown}
+      onMouseDown={handleMouseDownWrapped}
       onMouseMove={handlers.handleMouseMove}
-      onMouseUp={handlers.handleMouseUp}
-      onTouchStart={handlers.handleMouseDown}
+      onMouseUp={handleMouseUpWrapped}
+      onTouchStart={handleMouseDownWrapped}
       onTouchMove={handlers.handleMouseMove}
-      onTouchEnd={handlers.handleMouseUp}
+      onTouchEnd={handleMouseUpWrapped}
       style={{
         background: "#e5e7eb",
         cursor: toolMode === "hand" ? "grab" : CIRCLE_CURSOR,

@@ -9,6 +9,7 @@ export type Room = {
   id: string;
   name: string;
   is_active: boolean;
+  thumbnail_updated_at: string | null; // ★ 追加 (timestamptz)
 };
 
 type Props = {
@@ -21,11 +22,20 @@ export const RoomList = ({ rooms }: Props) => {
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       {rooms.map((room) => {
         // ▼ ループ内で個別にURL生成 (同期処理なので高速です)
-        const {
-          data: { publicUrl },
-        } = supabase.storage
-          .from("thumbnails")
-          .getPublicUrl(`room_${room.id}.webp`);
+
+        // ★ 変更: 基本はデフォルト画像
+        let displayUrl = "/default.webp";
+
+        // ★ 変更: 更新日時がある場合だけ Supabase URL + キャッシュ対策パラメータ
+        if (room.thumbnail_updated_at) {
+          const {
+            data: { publicUrl },
+          } = supabase.storage
+            .from("thumbnails")
+            .getPublicUrl(`room_${room.id}.webp`);
+
+          displayUrl = `${publicUrl}?v=${new Date(room.thumbnail_updated_at).getTime()}`;
+        }
 
         return (
           <Link
@@ -43,7 +53,7 @@ export const RoomList = ({ rooms }: Props) => {
                 <>
                   {/* サムネイル画像 */}
                   <img
-                    src={publicUrl}
+                    src={displayUrl}
                     alt={room.name}
                     className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                   />
