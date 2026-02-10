@@ -37,12 +37,6 @@ export const JoinScreen = ({ onJoin }: Props) => {
         onSubmit={handleSubmit}
         className="bg-white p-8 rounded-2xl border-4 border-gray-800 shadow-[8px_8px_0px_0px_rgba(24,24,27,1)] w-full max-w-md"
       >
-        <div className="flex justify-center mb-6">
-          <div className="bg-yellow-400 p-4 rounded-full border-4 border-gray-800">
-            <PenTool size={40} className="text-gray-900" />
-          </div>
-        </div>
-
         <h2 className="text-2xl font-black mb-6 text-center text-gray-800 tracking-tight">
           お絵描きに参加
         </h2>

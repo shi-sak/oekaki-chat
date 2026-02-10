@@ -7,6 +7,7 @@ type Props = {
   onlineUsers: User[];
   chatMessages: ChatMessage[];
   onSendChat: (text: string) => void;
+  onLogout: () => void;
 };
 
 export const SidePanel = ({
@@ -14,6 +15,7 @@ export const SidePanel = ({
   onlineUsers,
   chatMessages,
   onSendChat,
+  onLogout,
 }: Props) => {
   const [chatInput, setChatInput] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -62,6 +64,15 @@ export const SidePanel = ({
             </li>
           ))}
         </ul>
+        {/* 退出 */}
+        <div className="mt-auto border-t border-gray-200 p-3 bg-gray-50">
+          <button
+            onClick={onLogout}
+            className="w-full text-sm text-red-500 hover:bg-red-100 hover:text-red-600 font-bold py-2 rounded-full transition border border-red-200 hover:border-red-300"
+          >
+            退出
+          </button>
+        </div>
       </div>
 
       {/* 💬 チャットエリア */}

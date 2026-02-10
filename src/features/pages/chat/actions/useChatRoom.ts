@@ -23,7 +23,8 @@ export type Room = {
   name: string;
   is_active: boolean;
   session_start_at: string | null;
-  last_session_json_url: string | null;
+  last_session_image_url: string | null;
+  last_session_ended_at: string | null;
 };
 
 export type ChatMessage = {
@@ -57,7 +58,10 @@ export const useChatRoom = (
         .eq("id", roomId)
         .single();
       if (data) setRoomInfo(data);
-
+      if (!data.is_active) {
+        setIsReady(true);
+        return;
+      }
       // 過去の線（今のセッション分）を取得して描画
       const { data: strokes } = await supabase
         .from("strokes")
@@ -186,24 +190,31 @@ export const useChatRoom = (
 
   // 4. ゲーム終了 & アーカイブ
   const handleFinishGame = async (token: string) => {
-    if (!canvasHandleRef.current || !confirm("終了してアーカイブしますか？"))
-      return;
+    if (!canvasHandleRef.current) return;
 
     try {
-      const jsonString = canvasHandleRef.current.exportJson();
+      // 1. 画像バイナリを取得
+      const blob = await canvasHandleRef.current.exportImageBlob("png");
 
-      // 文字列をBlob化（ファイル化）
-      const blob = new Blob([jsonString], { type: "application/json" });
+      // ★ 追加: blob が null ならここで止める！
+      if (!blob) {
+        throw new Error("画像の生成に失敗しました");
+      }
 
-      // ■ 1. サーバーから「アップロード許可証(URL)」をもらう
-      const { signedUrl, publicUrl } = await getArchiveUploadUrl(roomId, token);
+      // 2. サーバーから「アップロード許可証(URL)」をもらう
+      const { signedUrl, publicUrl, finishToken } = await getArchiveUploadUrl(
+        roomId,
+        token,
+        blob.size, // ★ ここで安全に size にアクセスできる
+      );
 
-      // ■ 2. fetch で直接アップロード (PUT送信)
+      // 3. fetch で直接アップロード
       const uploadRes = await fetch(signedUrl, {
         method: "PUT",
-        body: blob, // ここにBlobをそのまま渡してOK
+        body: blob,
         headers: {
-          "Content-Type": "application/json",
+          "Content-Type": "image/png",
+          "Cache-Control": "public, max-age=31536000", //キャッシュ
         },
       });
 
@@ -211,66 +222,79 @@ export const useChatRoom = (
         throw new Error(`Upload failed: ${uploadRes.statusText}`);
       }
 
-      // ■ 3. 終了処理 (公開用URLを渡す)
-      await finishGame(roomId, publicUrl, token);
+      // 4. 終了処理 (画像のURLをDBに保存)
+      await finishGame(roomId, publicUrl, finishToken);
     } catch (e) {
       console.error(e);
-      alert("終了処理に失敗しました");
+      alert("終了処理に失敗しました；；");
     }
   };
 
-  //以下、サムネイル自動更新
+  //以下、サムネイル更新処理
+
+  // ■ 1. 最新の値を保持するための Ref を用意
+  const onlineUsersRef = useRef(onlineUsers);
+  const roomInfoRef = useRef(roomInfo);
   const lastUploadedStrokeCountRef = useRef<number>(0);
-
+  // ■ 2. 値が変わるたびに Ref を更新 (ここは何度走っても軽い)
   useEffect(() => {
-    // 1. 基本ガード
-    if (!roomInfo?.is_active || !user || !canvasHandleRef.current) return;
+    onlineUsersRef.current = onlineUsers;
+    roomInfoRef.current = roomInfo;
+  }, [onlineUsers, roomInfo]);
 
-    // 2. 5分おきのタイマー (300000ms)
+  // ■ 3. タイマー本体 (依存配列をスッキリさせる)
+  useEffect(() => {
+    if (!user || !canvasHandleRef.current) return;
+
     const intervalId = setInterval(
       async () => {
-        // --- リーダー選出 (省略なしで書くなら前回の通り) ---
-        if (!onlineUsers || onlineUsers.length === 0) return;
-        const sortedUsers = [...onlineUsers].sort((a, b) =>
+        // ★ ここで Ref.current を使う (常に最新の値が取れる！)
+        const currentRoom = roomInfoRef.current;
+        const currentUsers = onlineUsersRef.current;
+
+        // ガード: 部屋が終わってたら何もしない
+        if (!currentRoom?.is_active) return;
+
+        // リーダー選出
+        if (!currentUsers || currentUsers.length === 0) return;
+        const sortedUsers = [...currentUsers].sort((a, b) =>
           a.id.localeCompare(b.id),
         );
         const isLeader = sortedUsers[0].id === user.id;
+
         if (!isLeader) return;
 
-        // --- ★追加: サボり判定 ---
+        // --- サボり判定 & アップロード (ここはそのまま) ---
         const currentCount = canvasHandleRef.current?.getStrokeCount() ?? 0;
+        if (currentCount === lastUploadedStrokeCountRef.current) return;
 
-        // 前回から線の数が増えてなければ、何もせず終了！ (通信節約)
-        if (currentCount === lastUploadedStrokeCountRef.current) {
-          return;
-        }
-
-        // --- アップロード処理 ---
         try {
           const blob = await canvasHandleRef.current?.exportImageBlob();
           if (!blob) return;
 
+          // ★ ファイル名はこれでOK (上書き保存)
           const fileName = `room_${roomId}.webp`;
           await supabase.storage.from("thumbnails").upload(fileName, blob, {
             contentType: "image/webp",
             upsert: true,
           });
 
-          // 更新時刻をDBに反映
+          // 更新時刻をDB反映 (dbActionを呼ぶか、直接更新)
           await updateThumbnail(roomId);
 
-          // ★ 成功したら「現在のストローク数」を記録
           lastUploadedStrokeCountRef.current = currentCount;
           console.log("📷 サムネ更新完了 (Leader)");
         } catch (err) {
           console.error(err);
         }
       },
-      5 * 60 * 1000, // 5分間隔
-    );
+      5 * 60 * 1000,
+    ); // 5分
 
     return () => clearInterval(intervalId);
-  }, [roomId, user, roomInfo?.is_active, onlineUsers]);
+    // ★ 依存配列はこれだけ！
+    // roomId や user が変わらない限り、タイマーはリセットされません。
+  }, [roomId, user]);
 
   //おわり
   return {

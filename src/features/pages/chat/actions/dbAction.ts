@@ -1,6 +1,9 @@
 "use server";
 
 import { verifyTurnstile } from "./verifyTurnstile";
+
+import crypto from "crypto";
+
 // Server Action (特権管理者) 用のクライアント
 import { adminSupabase } from "@/lib/supabase/admin";
 
@@ -42,14 +45,34 @@ export async function startGame(roomId: string, token: string) {
  */
 export async function finishGame(
   roomId: string,
-  jsonUrl: string, // nullが入る可能性があるので型定義注意（string | null）
-  token: string,
+  publicUrl: string, // nullが入る可能性があるので型定義注意（string | null）
+  finishToken: string,
 ) {
-  // 1. Tokenチェック
-  const validation = await verifyTurnstile(token);
-  if (!validation.success) {
-    throw new Error("Bot verification failed");
+  // 認証用ファイルをダウンロード (中身を読む)
+  const SECRET_BUCKET = process.env.SECRET_BUCKET ?? "";
+  const lockFileName = `lock_${roomId}.json`;
+  const { data, error } = await adminSupabase.storage
+    .from(SECRET_BUCKET)
+    .download(lockFileName);
+  if (error || !data) {
+    throw new Error("セッションが無効です（もう一度お試しください）");
   }
+  //テキストをJSONに戻す
+  const text = await data.text();
+  const { secret, expiresAt } = JSON.parse(text);
+  // チェック開始
+  // 期限切れチェック
+  if (Date.now() > expiresAt) {
+    // ゴミ掃除してエラー
+    await adminSupabase.storage.from(SECRET_BUCKET).remove([lockFileName]);
+    throw new Error("有効期限切れです");
+  }
+  // 合言葉チェック (乗っ取り防止)
+  if (secret !== finishToken) {
+    throw new Error("不正なリクエストです");
+  }
+  // ファイルを削除 (使用済み)
+  await adminSupabase.storage.from(SECRET_BUCKET).remove([lockFileName]);
 
   // 2. 部屋を閉じる & アーカイブ保存
   const { error: roomError } = await adminSupabase
@@ -57,7 +80,7 @@ export async function finishGame(
     .update({
       is_active: false,
       session_start_at: null, // 開始時刻をリセット
-      last_session_json_url: jsonUrl,
+      last_session_image_url: publicUrl,
       last_session_ended_at: new Date().toISOString(),
     })
     .eq("id", roomId);
@@ -87,7 +110,12 @@ export async function updateThumbnail(roomId: string) {
 export async function getArchiveUploadUrl(
   roomId: string,
   token: string, // Turnstileトークン
+  size: number, //画像サイズ
 ) {
+  if (size > 20 * 1024 * 1024) {
+    throw new Error("ファイルが大きすぎます");
+  }
+
   // 1. Turnstileチェック (ここが防壁！)
   const validation = await verifyTurnstile(token);
   if (!validation.success) {
@@ -96,8 +124,7 @@ export async function getArchiveUploadUrl(
 
   // 2. ファイルパスを決定
   const timestamp = Date.now();
-  const filePath = `${roomId}/${timestamp}.json`;
-
+  const filePath = `${roomId}/${timestamp}.png`;
   // 3. 署名付きURLを発行 (Admin権限で！)
   // これで「このパスになら書き込んでいいよ」というURLが生成されます
   const { data, error } = await adminSupabase.storage
@@ -106,10 +133,33 @@ export async function getArchiveUploadUrl(
 
   if (error) throw new Error(error.message);
 
+  // ★★★ ロックファイル作成 ★★★
+
+  // 1. 合言葉を作る
+  const secret = crypto.randomUUID();
+
+  // 2. 有効期限を決める (5分後)
+  const expiresAt = Date.now() + 5 * 60 * 1000;
+
+  // 3. 固定ファイル名で保存
+  // 拡張子を .json にしておくと中身の扱いが楽です
+  const lockFileName = `lock_${roomId}.json`;
+
+  const fileContent = JSON.stringify({ secret, expiresAt });
+
+  // 上書きアップロード (upsert: true)
+  // これなら前回のゴミが残っていても無視して新しいロックをかけられます
+  const bucket = process.env.SECRET_BUCKET ?? "";
+  await adminSupabase.storage.from(bucket).upload(lockFileName, fileContent, {
+    contentType: "application/json",
+    upsert: true,
+  });
+
   return {
     signedUrl: data.signedUrl, // アップロード用の一時URL (token付き)
     path: data.path, // 保存されるパス (あとでDB保存に使う)
     publicUrl: adminSupabase.storage.from("archives").getPublicUrl(data.path)
       .data.publicUrl, // 閲覧用URL
+    finishToken: secret,
   };
 }
