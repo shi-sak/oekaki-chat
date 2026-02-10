@@ -56,61 +56,42 @@ export const PaintCanvas = ({
     resetCanvas: actions.resetCanvas,
     getStrokeCount: () => lines.length,
 
-    // ★ 重ね合わせ方式の書き出し
     exportImageBlob: async (type: "png" | "webp" = "webp") => {
       const stage = stageRef.current;
       if (!stage) return null;
 
-      // お絵かきレイヤーを探す
-      // (LAYER_RENDER_ORDERを使っている部分のレイヤーです)
-      // 構造が変わっていなければ、getChildren() で取得できますが、
-      // 確実にするために ref を使うか、今回はシンプルに「一番上のレイヤー」を取得してみます
-      const layers = stage.getLayers();
+      // 1. 現在のユーザーのズーム倍率と位置を避難 📝
+      const oldScale = stage.scaleX();
+      const oldPos = stage.position();
 
-      // 背景レイヤー(0番目) と お絵かきレイヤー(それ以降) があるはずです
-      // ここでは「お絵描きレイヤーたち」を対象にします
-      const drawingLayers = layers.filter((l) => {
-        // 背景用のRectを持っているレイヤーを除外する、等のロジックが必要ですが
-        // 今回は単純に「index 0 以外」または「全部重ねる」で考えます
-        return true;
+      // 2. 一瞬だけ「初期状態」に戻す 📸
+      // ※ユーザーの画面は更新されません (JSがブロックしているため)
+      stage.scale({ x: 1, y: 1 });
+      stage.position({ x: 0, y: 0 });
+
+      // 3. 同期的に Canvas 要素としてデータを引っこ抜く！
+      // toBlob (非同期) ではなく toCanvas (同期) を使うのが最大のキモです
+      const tempCanvas = stage.toCanvas({
+        x: 0,
+        y: 0,
+        width: CANVAS_WIDTH,
+        height: CANVAS_HEIGHT,
+        pixelRatio: type === "png" ? 2 : 0.5, // 画質調整
       });
 
-      // 1. 合成用のキャンバスを作成 (DOMには追加しない)
-      const finalCanvas = document.createElement("canvas");
-      // pixelRatioを考慮したサイズにする
-      const ratio = type === "png" ? 1 : 1; // 一旦 1倍で固定して試しましょう
+      // 4. 即座にユーザーの画面を元に戻す ↩️
+      stage.scale({ x: oldScale, y: oldScale });
+      stage.position(oldPos);
 
-      finalCanvas.width = CANVAS_WIDTH * ratio;
-      finalCanvas.height = CANVAS_HEIGHT * ratio;
+      // ここで初めて画面の更新(再描画)が走るが、
+      // ユーザーから見れば 1 と 4 の状態は同じなので、何も起きていないように見える
 
-      const ctx = finalCanvas.getContext("2d");
-      if (!ctx) return null;
-
-      // 2. まず「白」で塗りつぶす (これが背景になります)
-      ctx.fillStyle = "white";
-      ctx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
-
-      // 3. 各レイヤーを原寸で書き出して重ねる
-      for (const layer of layers) {
-        // layer.toCanvas は Stageのズームを無視して、定義通りのサイズで出力してくれます
-        const layerCanvas = layer.toCanvas({
-          x: 0,
-          y: 0,
-          width: CANVAS_WIDTH,
-          height: CANVAS_HEIGHT,
-          pixelRatio: ratio,
-        });
-
-        // 白背景の上に描画
-        ctx.drawImage(layerCanvas, 0, 0);
-      }
-
-      // 4. Blob化
+      // 5. 抜き取ったCanvasをBlobに変換して返す
       return new Promise((resolve) => {
-        finalCanvas.toBlob(
+        tempCanvas.toBlob(
           (blob) => resolve(blob),
           type === "png" ? "image/png" : "image/webp",
-          type === "png" ? 1 : 0.8, // 画質設定
+          type === "png" ? 1 : 0.8,
         );
       });
     },
