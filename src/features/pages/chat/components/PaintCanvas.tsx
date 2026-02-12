@@ -190,7 +190,7 @@ export const PaintCanvas = ({
                   tension={0.5}
                   lineCap="round"
                   lineJoin="round"
-                  hitStrokeWidth={20}
+                  hitStrokeWidth={Math.max(line.width, 20)}
                 />
               ))}
 
