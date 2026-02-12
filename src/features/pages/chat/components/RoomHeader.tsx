@@ -135,9 +135,18 @@ export const RoomHeader = ({ roomId, roomInfo, onStart, onFinish }: Props) => {
       <div className="flex gap-4 items-center relative">
         {/* ★ タイマー表示 (OPEN中のみ表示) */}
         {isActive && (
-          <div className="hidden sm:flex items-center gap-2 bg-gray-800 text-white px-3 py-1.5 rounded-md font-mono font-bold border-2 border-gray-800 shadow-sm">
+          <div className="flex items-center gap-2 bg-gray-800 text-white px-2 py-1 sm:px-3 sm:py-1.5 rounded-md font-mono font-bold border-2 border-gray-800 shadow-sm">
             <Clock size={16} className="text-green-400" />
-            <span className="tracking-widest">{timerString}</span>
+
+            {/* 縦に並べるレイアウト */}
+            <div className="flex flex-col items-end leading-none">
+              <span className="text-[9px] text-gray-400 font-sans mb-0.5">
+                LIMIT 60min
+              </span>
+              <span className="text-sm sm:text-base tracking-widest">
+                {timerString}
+              </span>
+            </div>
           </div>
         )}
 

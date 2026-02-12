@@ -7,8 +7,8 @@ import { PaintCanvasHandle } from "../components/PaintCanvas";
 import {
   startGame,
   finishGame,
-  updateThumbnail,
   getArchiveUploadUrl,
+  uploadThumbnailAction,
 } from "./dbAction";
 
 // ■ 型定義
@@ -246,14 +246,14 @@ export const useChatRoom = (
 
   // ■ 3. タイマー本体 (依存配列をスッキリさせる)
   useEffect(() => {
-    if (!user || !canvasHandleRef.current) return;
-
     const intervalId = setInterval(
       async () => {
+        if (!user || !canvasHandleRef.current) {
+          return;
+        }
         // ★ ここで Ref.current を使う (常に最新の値が取れる！)
         const currentRoom = roomInfoRef.current;
         const currentUsers = onlineUsersRef.current;
-
         // ガード: 部屋が終わってたら何もしない
         if (!currentRoom?.is_active) return;
 
@@ -274,18 +274,16 @@ export const useChatRoom = (
           const blob = await canvasHandleRef.current?.exportImageBlob();
           if (!blob) return;
 
-          // ★ ファイル名はこれでOK (上書き保存)
-          const fileName = `room_${roomId}.webp`;
-          await supabase.storage.from("thumbnails").upload(fileName, blob, {
-            contentType: "image/webp",
-            upsert: true,
-          });
+          const formData = new FormData();
+          formData.append("file", blob);
 
-          // 更新時刻をDB反映 (dbActionを呼ぶか、直接更新)
-          await updateThumbnail(roomId);
+          //アップロード
+          const result = await uploadThumbnailAction(roomId, formData);
+          if (!result.success) {
+            console.log(result.error);
+          }
 
           lastUploadedStrokeCountRef.current = currentCount;
-          console.log("📷 サムネ更新完了 (Leader)");
         } catch (err) {
           console.error(err);
         }

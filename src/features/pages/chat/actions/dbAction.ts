@@ -163,3 +163,61 @@ export async function getArchiveUploadUrl(
     finishToken: secret,
   };
 }
+
+//サムネイルアップロード(軽いのでサーバを通す)
+export async function uploadThumbnailAction(
+  roomId: string,
+  formData: FormData,
+) {
+  try {
+    const file = formData.get("file") as File;
+    if (!file) throw new Error("No file uploaded");
+    if (file.size > 500 * 1024) {
+      return {
+        success: false,
+        error: "ファイルサイズが大きすぎます (上限500KB)",
+      };
+    }
+
+    // 1. 部屋が本当に存在して、アクティブかチェック (セキュリティ)
+    const { data: room, error: roomError } = await adminSupabase
+      .from("rooms")
+      .select("thumbnail_updated_at, is_active")
+      .eq("id", roomId)
+      .single();
+
+    if (roomError || !room) throw new Error("Room not found");
+    if (!room.is_active) throw new Error("Room is finished");
+
+    //API連打対策 4分は経っててほしい
+    const lastUpdate = new Date(room.thumbnail_updated_at).getTime();
+    const now = Date.now();
+    if (now - lastUpdate < 4 * 60 * 1000) {
+      return { success: false, error: "Too many requests" };
+    }
+
+    // 2. ArrayBufferに変換
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // 3. Admin権限で上書きアップロード (Upsert)
+    // ※ポリシーを無視して書き込める
+    const fileName = `room_${roomId}.webp`;
+    const { error: uploadError } = await adminSupabase.storage
+      .from("thumbnails")
+      .upload(fileName, buffer, {
+        contentType: "image/webp",
+        upsert: true, //上書き許可
+      });
+
+    if (uploadError) throw uploadError;
+
+    // DB反映
+    await updateThumbnail(roomId);
+
+    return { success: true };
+  } catch (error) {
+    console.error("Thumbnail upload failed:", error);
+    return { success: false, error: "Upload failed" };
+  }
+}

@@ -83,7 +83,7 @@ export const PaintCanvas = ({
         y: 0,
         width: CANVAS_WIDTH,
         height: CANVAS_HEIGHT,
-        pixelRatio: type === "png" ? 2 : 0.5, // 画質調整
+        pixelRatio: type === "png" ? 1 : 0.25, // 画質調整
       });
 
       // 4. 即座にユーザーの画面を元に戻す ↩️
@@ -98,7 +98,7 @@ export const PaintCanvas = ({
         tempCanvas.toBlob(
           (blob) => resolve(blob),
           type === "png" ? "image/png" : "image/webp",
-          type === "png" ? 1 : 0.8,
+          type === "png" ? 1 : 0.5,
         );
       });
     },
