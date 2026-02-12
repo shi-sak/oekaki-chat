@@ -58,6 +58,7 @@ export const RoomList = ({ rooms }: Props) => {
           <Link
             key={room.id}
             href={`/chat/${room.id}`}
+            prefetch={false}
             className={`group relative block rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 border-2 ${
               room.is_active
                 ? "bg-white border-transparent"
