@@ -45,37 +45,6 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
     [onSaveStroke, roomInfo?.is_active],
   );
 
-  //テスト用 ＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾
-  // const roomInfo = {
-  //   id: 1,
-  //   name: "テスト部屋",
-  //   is_active: true, // ★ここを false にすれば「待機画面」もテストできる！
-  //   session_start_at: new Date().toISOString(),
-  //   last_session_image_url: "https://placehold.jp/150x150.png", // ダミー画像
-  //   last_session_json_url: null,
-  // };
-
-  // const onlineUsers = [
-  //   { id: "me", name: "自分" },
-  //   { id: "other", name: "テストユーザー" },
-  // ];
-
-  // const chatMessages = [
-  //   {
-  //     user_name: "テストユーザー",
-  //     text: "こんにちは！",
-  //     timestamp: Date.now(),
-  //   },
-  // ];
-
-  // // ダミー関数 (コンソールに出すだけ)
-  // const onSaveStroke = (stroke: any) => console.log("描画データ:", stroke);
-  // const sendChatMessage = (text: string) => console.log("チャット送信:", text);
-  // const handleStartGame = async () => alert("スタートボタンが押されました");
-  // const handleFinishGame = async () => alert("終了ボタンが押されました");
-
-  //ここまでテスト用 ＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾＾
-
   // ユーザー判定 (初回ロード時)
   useEffect(() => {
     const savedName = sessionStorage.getItem(`oekaki_name_${roomId}`);
@@ -106,6 +75,7 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
 
   // ■ 終了ボタン処理 (ラッパー)
   // RoomHeader から token を受け取って実行します
+  // ★ 第2引数 isAuto を追加
   const handleFinishWrapper = async (
     token: string,
     isAuto: boolean = false,
@@ -114,6 +84,7 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
     if (!isAuto) {
       if (!confirm("終了しますか？")) return;
     }
+
     if (!canvasHandleRef.current) return;
 
     try {
@@ -147,7 +118,7 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
               roomId={roomId}
               roomInfo={roomInfo}
               onStart={handleStartGame}
-              onFinish={handleFinishWrapper}
+              onFinish={handleFinishWrapper} // 関数を渡す
             />
             <CanvasSection
               canvasHandleRef={canvasHandleRef}

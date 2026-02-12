@@ -1,15 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { Users } from "lucide-react";
+import { Users, Clock } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
 
-// 型定義
+import { ROOM_LIMIT_MINUTES } from "@/constants/canvas"; // 定数使用
+
 export type Room = {
   id: string;
   name: string;
   is_active: boolean;
-  thumbnail_updated_at: string | null; // ★ 追加 (timestamptz)
+  thumbnail_updated_at: string | null;
+  session_start_at: string | null; // ★ 追加
 };
 
 type Props = {
@@ -17,6 +19,15 @@ type Props = {
 };
 
 export const RoomList = ({ rooms }: Props) => {
+  // 残り時間を計算するヘルパー関数
+  const getTimeRemaining = (startAt: string) => {
+    const start = new Date(startAt).getTime();
+    const now = new Date().getTime();
+    const elapsedMinutes = (now - start) / (1000 * 60);
+    const remaining = Math.max(0, ROOM_LIMIT_MINUTES - elapsedMinutes);
+    return Math.ceil(remaining); // 切り上げ（残り1分未満でも"1分"と出す）
+  };
+
   // ループ内で使うためにここで初期化
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -36,6 +47,12 @@ export const RoomList = ({ rooms }: Props) => {
 
           displayUrl = `${publicUrl}?v=${new Date(room.thumbnail_updated_at).getTime()}`;
         }
+
+        // ★ 残り時間計算
+        const remainingMinutes =
+          room.is_active && room.session_start_at
+            ? getTimeRemaining(room.session_start_at)
+            : 0;
 
         return (
           <Link
@@ -62,6 +79,17 @@ export const RoomList = ({ rooms }: Props) => {
                   <div className="absolute top-3 left-3 flex items-center gap-1 bg-red-500/90 text-white text-xs font-bold px-2 py-1 rounded-full shadow backdrop-blur-sm animate-pulse">
                     <span className="w-2 h-2 bg-white rounded-full animate-ping" />
                     LIVE
+                  </div>
+
+                  {/* ★ 右上: 残り時間バッジ (追加) */}
+                  <div className="absolute top-3 right-3 flex items-center gap-1 bg-black/60 text-white text-xs font-bold px-2 py-1 rounded-full backdrop-blur-sm">
+                    <Clock
+                      size={12}
+                      className={
+                        remainingMinutes < 10 ? "text-red-400" : "text-white"
+                      }
+                    />
+                    <span>あと {remainingMinutes} 分</span>
                   </div>
 
                   {/* 右下の参加人数（仮） */}

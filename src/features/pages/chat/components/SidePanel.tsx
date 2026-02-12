@@ -90,7 +90,7 @@ export const SidePanel = ({
             </p>
           )}
           {chatMessages.map((msg, i) => {
-            const isMe = msg.user_name === currentUser.name;
+            const isMe = msg.user_id === currentUser?.id;
             return (
               <div
                 key={i}

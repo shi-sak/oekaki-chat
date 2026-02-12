@@ -28,6 +28,7 @@ export type Room = {
 };
 
 export type ChatMessage = {
+  user_id: string;
   user_name: string;
   text: string;
   timestamp: number;
@@ -163,6 +164,7 @@ export const useChatRoom = (
   const sendChatMessage = async (text: string) => {
     if (!text.trim()) return;
     const msg: ChatMessage = {
+      user_id: user!.id,
       user_name: user!.name,
       text,
       timestamp: Date.now(),

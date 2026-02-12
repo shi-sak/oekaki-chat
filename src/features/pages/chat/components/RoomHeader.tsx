@@ -1,15 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Play, StopCircle, Hash, Loader2, Clock } from "lucide-react"; // ★ Clock追加
+import { useState, useEffect, useRef } from "react"; // useRef追加
+import { Play, StopCircle, Hash, Loader2, Clock } from "lucide-react";
 import { Turnstile } from "@marsidev/react-turnstile";
 import { Room } from "../actions/useChatRoom";
+import { ROOM_LIMIT_MINUTES } from "@/constants/canvas"; // ★定数インポート
 
 type Props = {
   roomId: string;
   roomInfo: Room | null;
   onStart: (token: string) => Promise<void>;
-  onFinish: (token: string) => Promise<void>;
+  // ★ 型変更: 自動フラグを受け取れるようにする
+  onFinish: (token: string, isAuto?: boolean) => Promise<void>;
 };
 
 export const RoomHeader = ({ roomId, roomInfo, onStart, onFinish }: Props) => {
@@ -20,16 +22,20 @@ export const RoomHeader = ({ roomId, roomInfo, onStart, onFinish }: Props) => {
   // どっちのボタンを押したか
   const [actionType, setActionType] = useState<"start" | "finish" | null>(null);
 
-  // ★追加: 経過時間表示用
+  // 経過時間表示用
   const [timerString, setTimerString] = useState("00:00");
 
+  // ★ 追加: 既に自動終了処理が走ったかを記録するフラグ
+  const hasAutoFinishedRef = useRef(false);
+
   // --------------------------------------------------------
-  // ★ タイマーロジック
+  // ★ タイマー & 自動終了監視ロジック
   // --------------------------------------------------------
   useEffect(() => {
     // 部屋が閉じてる、または開始時刻がない場合はリセットして終了
     if (!isActive || !roomInfo?.session_start_at) {
       setTimerString("00:00");
+      hasAutoFinishedRef.current = false; // フラグもリセット
       return;
     }
 
@@ -48,6 +54,22 @@ export const RoomHeader = ({ roomId, roomInfo, onStart, onFinish }: Props) => {
           .toString()
           .padStart(2, "0")}`,
       );
+
+      // ★★★ ここで制限時間チェック！ ★★★
+      // 分換算の秒数を超えていたら終了
+      const limitSeconds = ROOM_LIMIT_MINUTES * 60;
+
+      if (totalSeconds >= limitSeconds && !hasAutoFinishedRef.current) {
+        hasAutoFinishedRef.current = true; // 2回実行されないようにガード
+
+        // アラート表示
+        alert(
+          `制限時間の${ROOM_LIMIT_MINUTES}分が経過しました。終了処理を行います。`,
+        );
+
+        // 親のWrapperを叩く (tokenは空文字、isAuto=true)
+        onFinish("", true);
+      }
     };
 
     // 初回実行
@@ -57,7 +79,7 @@ export const RoomHeader = ({ roomId, roomInfo, onStart, onFinish }: Props) => {
     const interval = setInterval(calculateTime, 1000);
 
     return () => clearInterval(interval);
-  }, [isActive, roomInfo?.session_start_at]);
+  }, [isActive, roomInfo?.session_start_at, onFinish]);
 
   // --------------------------------------------------------
   // アクションハンドラ
@@ -111,7 +133,7 @@ export const RoomHeader = ({ roomId, roomInfo, onStart, onFinish }: Props) => {
 
       {/* アクションエリア */}
       <div className="flex gap-4 items-center relative">
-        {/* ★ タイマー表示 (OPEN中のみ表示、または常に表示でもOK) */}
+        {/* ★ タイマー表示 (OPEN中のみ表示) */}
         {isActive && (
           <div className="hidden sm:flex items-center gap-2 bg-gray-800 text-white px-3 py-1.5 rounded-md font-mono font-bold border-2 border-gray-800 shadow-sm">
             <Clock size={16} className="text-green-400" />

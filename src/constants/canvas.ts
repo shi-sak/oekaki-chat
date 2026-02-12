@@ -4,6 +4,9 @@
 export const CANVAS_WIDTH = 2000;
 export const CANVAS_HEIGHT = 2000;
 
+// 制限時間 (分)
+export const ROOM_LIMIT_MINUTES = 60;
+
 //レイヤー
 export const LAYER_RENDER_ORDER = [2, 1];
 
