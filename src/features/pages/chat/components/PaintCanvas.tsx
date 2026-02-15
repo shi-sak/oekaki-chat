@@ -1,7 +1,8 @@
 "use client";
 
-import { useImperativeHandle, Ref, useRef } from "react";
+import { useImperativeHandle, Ref, useRef, useEffect } from "react";
 import { Stage, Layer, Line, Rect, Group } from "react-konva";
+import Konva from "konva";
 import {
   CANVAS_WIDTH,
   CANVAS_HEIGHT,
@@ -16,6 +17,9 @@ export interface PaintCanvasHandle {
   resetCanvas: () => void;
   exportImageBlob: (type?: "png" | "webp") => Promise<Blob | null>;
   getStrokeCount: () => number;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  resetView: () => void;
 }
 
 type Props = Omit<CommonCanvasProps, "onSaveStroke"> & {
@@ -32,8 +36,11 @@ export const PaintCanvas = ({
   disabled = false,
 }: Props) => {
   const { onSaveStroke } = useRoomContext();
-  //
   const isDrawingRef = useRef(false);
+
+  // ノード管理用のRef
+  const layerRefs = useRef<Map<number, Konva.Layer>>(new Map());
+  const staticGroupRefs = useRef<Map<number, Konva.Group>>(new Map());
 
   const {
     stageRef,
@@ -53,67 +60,96 @@ export const PaintCanvas = ({
     disabled,
   });
 
+  // ■ キャッシュ管理のエフェクト
+  useEffect(() => {
+    // 少し待ってからキャッシュする（描画完了を待つため）
+    const timer = setTimeout(() => {
+      staticGroupRefs.current.forEach((group) => {
+        try {
+          // 一度クリアしないと更新されないことがあるためクリア
+          group.clearCache();
+
+          // 中身がある場合のみキャッシュ
+          group.cache({
+            pixelRatio: 3, // iPad用高画質
+            x: 0,
+            y: 0,
+            width: CANVAS_WIDTH,
+            height: CANVAS_HEIGHT,
+          });
+        } catch (e) {
+        }
+      });
+    }, 50); // 50ms程度の遅延でUIブロックを防ぐ
+
+    return () => clearTimeout(timer);
+  }, [lines]); // ★ linesが変わった時（入室時、書き終わり時）だけ走る！
+
+
   useImperativeHandle(ref, () => ({
     drawStroke: actions.addStroke,
     resetCanvas: actions.resetCanvas,
     getStrokeCount: () => lines.length,
 
     exportImageBlob: async (type: "png" | "webp" = "webp") => {
-      //線を引いてる最中なら待つ
       while (isDrawingRef.current) {
-        // 100ms 待ってから再チェック (ポーリング)
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       const stage = stageRef.current;
       if (!stage) return null;
 
-      // 1. 現在のユーザーのズーム倍率と位置を避難 📝
       const oldScale = stage.scaleX();
       const oldPos = stage.position();
 
-      // 2. 一瞬だけ「初期状態」に戻す 📸
-      // ※ユーザーの画面は更新されません (JSがブロックしているため)
       stage.scale({ x: 1, y: 1 });
       stage.position({ x: 0, y: 0 });
 
-      // 3. 同期的に Canvas 要素としてデータを引っこ抜く！
-      // toBlob (非同期) ではなく toCanvas (同期) を使うのが最大のキモです
+      // 書き出し時はキャッシュをクリアして最高画質に
+      staticGroupRefs.current.forEach((group) => group.clearCache());
+
+      const TARGET_WIDTH = 300;
+      const ratio = TARGET_WIDTH / CANVAS_WIDTH;
+
       const tempCanvas = stage.toCanvas({
         x: 0,
         y: 0,
         width: CANVAS_WIDTH,
         height: CANVAS_HEIGHT,
-        pixelRatio: type === "png" ? 1 : 0.25, // 画質調整
+        pixelRatio: type === "png" ? 1 : ratio,
       });
 
-      // 4. 即座にユーザーの画面を元に戻す ↩️
       stage.scale({ x: oldScale, y: oldScale });
       stage.position(oldPos);
 
-      // ここで初めて画面の更新(再描画)が走るが、
-      // ユーザーから見れば 1 と 4 の状態は同じなので、何も起きていないように見える
+      // 書き出し終わったらキャッシュ復帰
+      staticGroupRefs.current.forEach((group) => {
+        try {
+          group.cache({ pixelRatio: 3, x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
+        } catch (e) { }
+      });
 
-      // 5. 抜き取ったCanvasをBlobに変換して返す
       return new Promise((resolve) => {
         tempCanvas.toBlob(
           (blob) => resolve(blob),
           type === "png" ? "image/png" : "image/webp",
-          type === "png" ? 1 : 0.5,
+          type === "png" ? 1 : 0.6,
         );
       });
     },
+    zoomIn: actions.zoomIn,
+    zoomOut: actions.zoomOut,
+    resetView: actions.resetView,
   }));
 
   const CIRCLE_CURSOR = `url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='7' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9' fill='%23ffffff' stroke='%23000000' stroke-width='2'/%3E%3C/svg%3E") 12 12, crosshair`;
 
-  // ★ 2. イベントハンドラをラップして、フラグをON/OFFする
   const handleMouseDownWrapped = (e: any) => {
-    isDrawingRef.current = true; // 描き始めフラグON
+    isDrawingRef.current = true;
     handlers.handleMouseDown(e);
   };
 
   const handleMouseUpWrapped = () => {
-    isDrawingRef.current = false; // 描き終わりフラグOFF
+    isDrawingRef.current = false;
     handlers.handleMouseUp();
   };
 
@@ -140,9 +176,6 @@ export const PaintCanvas = ({
         touchAction: "none",
       }}
     >
-      {/* ▼ レイヤー0: 背景専用 (独立させる！)
-        これが一番下にいるので、上の消しゴムで透けてもここが見える
-      */}
       <Layer>
         <Rect
           x={0}
@@ -156,14 +189,17 @@ export const PaintCanvas = ({
         />
       </Layer>
 
-      {/* ▼ レイヤー1〜N: お絵描きレイヤー (独立させる！)
-        ループで <Layer> を個別に生成するのがポイント
-      */}
       {LAYER_RENDER_ORDER.map((layerId) => {
         const layerLines = lines.filter((l) => {
           if (layerId === 1) return l.layerId === 1 || !l.layerId;
           return l.layerId === layerId;
         });
+
+        const THRESHOLD = 20;
+        const splitIndex = Math.max(0, layerLines.length - THRESHOLD);
+
+        const staticLines = layerLines.slice(0, splitIndex);
+        const dynamicLines = layerLines.slice(splitIndex);
 
         const isDrawingOnThisLayer =
           activeLayer === layerId && currentPoints.length > 0;
@@ -171,26 +207,53 @@ export const PaintCanvas = ({
         return (
           <Layer
             key={layerId}
+            ref={(node) => {
+              if (node) layerRefs.current.set(layerId, node);
+            }}
             clipX={0}
             clipY={0}
             clipWidth={CANVAS_WIDTH}
             clipHeight={CANVAS_HEIGHT}
           >
-            <Group>
-              {layerLines.map((line) => (
+            {/* ■ 静的グループ (キャッシュされる古い線) */}
+            <Group
+              ref={(node) => {
+                if (node) {
+                  staticGroupRefs.current.set(layerId, node);
+                  // ★ ここで cache() を呼ぶのは削除！ (useEffectに任せる)
+                }
+              }}
+            >
+              {staticLines.map((line) => (
                 <Line
                   key={line.id}
                   points={line.points}
                   strokeWidth={line.width}
                   stroke={line.tool === "eraser" ? "black" : line.color}
-                  // このレイヤー内だけで透明化！下の白背景は無事！
                   globalCompositeOperation={
                     line.tool === "eraser" ? "destination-out" : "source-over"
                   }
                   tension={0.5}
                   lineCap="round"
                   lineJoin="round"
-                  hitStrokeWidth={Math.max(line.width, 20)}
+                />
+              ))}
+            </Group>
+
+            {/* ■ 動的グループ (最新の線 + 描画中) */}
+            <Group>
+              {dynamicLines.map((line) => (
+                <Line
+                  key={line.id}
+                  points={line.points}
+                  strokeWidth={line.width}
+                  stroke={line.tool === "eraser" ? "black" : line.color}
+                  globalCompositeOperation={
+                    line.tool === "eraser" ? "destination-out" : "source-over"
+                  }
+                  tension={0.5}
+                  lineCap="round"
+                  lineJoin="round"
                 />
               ))}
 

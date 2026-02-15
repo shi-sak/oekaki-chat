@@ -1,22 +1,22 @@
 "use client";
 
 import { RefObject, useState } from "react";
-
 import dynamic from "next/dynamic";
+import { Plus, Minus, RotateCcw } from "lucide-react"; 
 
 import type { PaintCanvasHandle } from "./PaintCanvas";
-// SSR（サーバーサイドレンダリング）を無効化して読み込む
+// SSR無効化
 const PaintCanvas = dynamic(
   () => import("./PaintCanvas").then((mod) => mod.PaintCanvas),
   {
-    ssr: false, //サーバーで描画しない
-    loading: () => <div className="h-[600px] bg-gray-200 animate-pulse" />, // ロード中の表示
+    ssr: false,
+    loading: () => <div className="h-[600px] bg-gray-200 animate-pulse" />,
   },
 );
 
 import { ToolBox } from "../components/ToolBox";
 import { Room } from "../actions/useChatRoom";
-import { ToolMode } from "@/constants/canvas"; // ★新しい型定義をimport
+import { ToolMode } from "@/constants/canvas";
 
 type Props = {
   canvasHandleRef: RefObject<PaintCanvasHandle | null>;
@@ -26,18 +26,13 @@ type Props = {
 export const CanvasSection = ({ canvasHandleRef, roomInfo }: Props) => {
   const isActive = roomInfo?.is_active;
 
-  // ■ ツールの状態管理
-  const [color, setColor] = useState("#18181b"); // 初期値: 黒
+  const [color, setColor] = useState("#18181b");
   const [toolMode, setToolMode] = useState<ToolMode>("pen");
-
-  // ★ 変更点1: 太さを別々に管理する
-  const [penWidth, setPenWidth] = useState(4); // ペンの初期値
-  const [eraserWidth, setEraserWidth] = useState(20); // 消しゴムの初期値（太めが便利！）
-
-  // ★ 変更点2: 現在のモードに合わせて「使う太さ」を決める
+  const [penWidth, setPenWidth] = useState(4);
+  const [eraserWidth, setEraserWidth] = useState(20);
   const currentWidth = toolMode === "eraser" ? eraserWidth : penWidth;
+  const [activeLayer, setActiveLayer] = useState(1);
 
-  // ★ 変更点3: 太さを変更する関数もモードで分岐させる
   const handleWidthChange = (newWidth: number) => {
     if (toolMode === "eraser") {
       setEraserWidth(newWidth);
@@ -47,30 +42,59 @@ export const CanvasSection = ({ canvasHandleRef, roomInfo }: Props) => {
   };
 
   const handleColorPick = (pickedColor: string) => {
-    setColor(pickedColor); // 色を更新
-    setToolMode("pen"); // 自動的にペンモードに戻す（これが使いやすい！）
+    setColor(pickedColor);
+    setToolMode("pen");
   };
 
-  //初期レイヤー
-  const [activeLayer, setActiveLayer] = useState(1);
+  // ★ ズーム操作用の関数
+  const handleZoomIn = () => canvasHandleRef.current?.zoomIn();
+  const handleZoomOut = () => canvasHandleRef.current?.zoomOut();
+  const handleResetView = () => canvasHandleRef.current?.resetView();
 
   return (
     <div className="flex-1 flex flex-col gap-4 relative">
       <div className="relative border-4 border-gray-800 rounded-xl overflow-hidden shadow-lg bg-gray-200 h-[600px] w-full group">
+        
         {isActive && (
-          <ToolBox
-            className="absolute top-4 left-4 z-10"
-            currentColor={color}
-            // ▼ モードに応じた太さを渡す
-            currentWidth={currentWidth}
-            toolMode={toolMode}
-            onColorChange={setColor}
-            // ▼ モードに応じた更新関数を渡す
-            onWidthChange={handleWidthChange}
-            onToolChange={setToolMode}
-            activeLayer={activeLayer}
-            onLayerChange={setActiveLayer}
-          />
+          <>
+            {/* 左上: ツールボックス */}
+            <ToolBox
+              className="absolute top-4 left-4 z-10"
+              currentColor={color}
+              currentWidth={currentWidth}
+              toolMode={toolMode}
+              onColorChange={setColor}
+              onWidthChange={handleWidthChange}
+              onToolChange={setToolMode}
+              activeLayer={activeLayer}
+              onLayerChange={setActiveLayer}
+            />
+
+            {/* ★ 右上: ズームコントローラー */}
+            <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
+              <button
+                onClick={handleZoomIn}
+                className="bg-white/90 backdrop-blur p-2 rounded-lg border-2 border-gray-800 shadow-md hover:bg-gray-100 transition-all text-gray-700"
+                title="Zoom In"
+              >
+                <Plus size={20} />
+              </button>
+              <button
+                onClick={handleResetView}
+                className="bg-white/90 backdrop-blur p-2 rounded-lg border-2 border-gray-800 shadow-md hover:bg-gray-100 transition-all text-gray-700 font-bold text-xs"
+                title="Reset View"
+              >
+                <RotateCcw size={20} />
+              </button>
+              <button
+                onClick={handleZoomOut}
+                className="bg-white/90 backdrop-blur p-2 rounded-lg border-2 border-gray-800 shadow-md hover:bg-gray-100 transition-all text-gray-700"
+                title="Zoom Out"
+              >
+                <Minus size={20} />
+              </button>
+            </div>
+          </>
         )}
 
         <div className="w-full h-full bg-gray-200 cursor-crosshair">

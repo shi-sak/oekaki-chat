@@ -1,4 +1,6 @@
-import { useState, useRef, useEffect } from "react";
+"use client";
+
+import { useState } from "react";
 import { Users, Send, MessageSquare } from "lucide-react";
 import { User, ChatMessage } from "../actions/useChatRoom";
 
@@ -18,12 +20,6 @@ export const SidePanel = ({
   onLogout,
 }: Props) => {
   const [chatInput, setChatInput] = useState("");
-  const chatEndRef = useRef<HTMLDivElement>(null);
-
-  // チャットが更新されたら自動スクロール
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatMessages]);
 
   const handleSubmit = (e: React.SyntheticEvent) => {
     e.preventDefault();
@@ -100,7 +96,7 @@ export const SidePanel = ({
                   {msg.user_name}
                 </span>
                 <div
-                  className={`max-w-[85%] p-2 rounded-lg text-sm border-2 border-gray-800 shadow-[2px_2px_0px_0px_rgba(0,0,0,0.1)] ${
+                  className={`max-w-[85%] p-2 rounded-lg text-sm border-2 border-gray-800 shadow-[2px_2px_0px_0px_rgba(0,0,0,0.1)] break-words ${
                     isMe ? "bg-blue-500 text-white" : "bg-white text-gray-800"
                   }`}
                 >
@@ -109,7 +105,6 @@ export const SidePanel = ({
               </div>
             );
           })}
-          <div ref={chatEndRef} />
         </div>
 
         {/* 入力フォーム */}

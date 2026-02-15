@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useEffect, useMemo } from "react";
-import { useChatRoom, User } from "./actions/useChatRoom";
+import { useChatRoom, User, ChatMessage } from "./actions/useChatRoom"; // ChatMessageを追加
 
 import { useRouter } from "next/navigation";
 
@@ -14,6 +14,7 @@ import { CanvasSection } from "./components/CanvasSection";
 import { SidePanel } from "./components/SidePanel";
 import { Archive } from "./components/Archive";
 import { ResultModal } from "./components/ResultModal";
+import { ChatToast } from "./components/ChatToast"; // ★追加
 
 export const ChatRoom = ({ roomId }: { roomId: string }) => {
   //ユーザ情報
@@ -25,6 +26,10 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
   //Router
   const router = useRouter();
 
+  // ★ トースト通知用のState
+  const [toastMessage, setToastMessage] = useState<ChatMessage | null>(null);
+  const toastTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   //DB接続時は以下を使用する
   const {
     roomInfo,
@@ -35,6 +40,24 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
     handleStartGame,
     handleFinishGame,
   } = useChatRoom(roomId, currentUser, canvasHandleRef);
+
+  // ★ チャット監視 & トースト表示ロジック
+  useEffect(() => {
+    if (!chatMessages || chatMessages.length === 0) return;
+    const lastMsg = chatMessages[chatMessages.length - 1];
+
+    // 自分の発言なら何もしない
+    if (lastMsg.user_id === currentUser?.id) return;
+
+    // 通知をセット
+    setToastMessage(lastMsg);
+
+    // タイマーリセット & 再セット (4秒表示)
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => {
+      setToastMessage(null);
+    }, 4000);
+  }, [chatMessages, currentUser?.id]);
 
   // Context
   const roomContextValue = useMemo(
@@ -111,7 +134,11 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
 
   return (
     <RoomProvider value={roomContextValue}>
-      <div className="min-h-screen bg-gray-50 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:20px_20px] p-4">
+      <div className="min-h-screen bg-gray-50 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:20px_20px] p-4 relative">
+        
+        {/* ★ トーストコンポーネントを配置 (fixedなのでどこでもOK) */}
+        <ChatToast message={toastMessage} />
+
         <div className="max-w-7xl mx-auto flex flex-col lg:flex-row gap-6 justify-center">
           <div className="w-full max-w-5xl flex flex-col gap-4">
             <RoomHeader

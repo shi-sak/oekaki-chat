@@ -142,6 +142,8 @@ export const useKonva = ({
   const resetCanvas = () => setLines([]);
   const addStroke = (stroke: Stroke) => setLines((prev) => [...prev, stroke]);
 
+  
+
   return {
     stageRef,
     lines,
@@ -158,6 +160,16 @@ export const useKonva = ({
       exportImage,
       resetCanvas,
       addStroke,
+      zoomIn: () => {
+      setStageScale((prev) => Math.min(prev * 1.2, 5)); // 最大5倍
+    },
+    zoomOut: () => {
+      setStageScale((prev) => Math.max(prev / 1.2, 0.1)); // 最小0.1倍
+    },
+    resetView: () => {
+      setStageScale(1);
+      setStagePos({ x: 0, y: 0 });
+    },
     },
   };
 };
