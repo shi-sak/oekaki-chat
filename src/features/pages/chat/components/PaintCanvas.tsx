@@ -12,6 +12,8 @@ import {
 import { useKonva } from "@/features/pages/chat/actions/useKonva";
 import { useRoomContext } from "../contexts/RoomContext";
 
+const CACHE_THRESHOLD = 50;
+
 export interface PaintCanvasHandle {
   drawStroke: (stroke: any) => void;
   resetCanvas: () => void;
@@ -38,7 +40,6 @@ export const PaintCanvas = ({
   const { onSaveStroke } = useRoomContext();
   const isDrawingRef = useRef(false);
 
-  // ノード管理用のRef
   const layerRefs = useRef<Map<number, Konva.Layer>>(new Map());
   const staticGroupRefs = useRef<Map<number, Konva.Group>>(new Map());
 
@@ -62,13 +63,13 @@ export const PaintCanvas = ({
 
   // ■ キャッシュ管理のエフェクト
   useEffect(() => {
-    // 少し待ってからキャッシュする（描画完了を待つため）
+    // 1. まずは即座にキャッシュを剥がす！ (これで線が消えるのを防ぐ)
+    staticGroupRefs.current.forEach((group) => group.clearCache());
+
+    // 2. 少し待ってからキャッシュし直す (重い処理は遅延させる)
     const timer = setTimeout(() => {
       staticGroupRefs.current.forEach((group) => {
         try {
-          // 一度クリアしないと更新されないことがあるためクリア
-          group.clearCache();
-
           // 中身がある場合のみキャッシュ
           group.cache({
             pixelRatio: 3, // iPad用高画質
@@ -78,14 +79,15 @@ export const PaintCanvas = ({
             height: CANVAS_HEIGHT,
           });
         } catch (e) {
+          // console.error(e); // 空の場合は無視
         }
       });
-    }, 50); // 50ms程度の遅延でUIブロックを防ぐ
+    }, 50);
 
     return () => clearTimeout(timer);
-  }, [lines]); // ★ linesが変わった時（入室時、書き終わり時）だけ走る！
+  }, [lines]); 
 
-
+  // ... (useImperativeHandle はそのまま) ...
   useImperativeHandle(ref, () => ({
     drawStroke: actions.addStroke,
     resetCanvas: actions.resetCanvas,
@@ -104,7 +106,6 @@ export const PaintCanvas = ({
       stage.scale({ x: 1, y: 1 });
       stage.position({ x: 0, y: 0 });
 
-      // 書き出し時はキャッシュをクリアして最高画質に
       staticGroupRefs.current.forEach((group) => group.clearCache());
 
       const TARGET_WIDTH = 300;
@@ -121,7 +122,6 @@ export const PaintCanvas = ({
       stage.scale({ x: oldScale, y: oldScale });
       stage.position(oldPos);
 
-      // 書き出し終わったらキャッシュ復帰
       staticGroupRefs.current.forEach((group) => {
         try {
           group.cache({ pixelRatio: 3, x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
@@ -140,6 +140,7 @@ export const PaintCanvas = ({
     zoomOut: actions.zoomOut,
     resetView: actions.resetView,
   }));
+
 
   const CIRCLE_CURSOR = `url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='7' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9' fill='%23ffffff' stroke='%23000000' stroke-width='2'/%3E%3C/svg%3E") 12 12, crosshair`;
 
@@ -195,8 +196,8 @@ export const PaintCanvas = ({
           return l.layerId === layerId;
         });
 
-        const THRESHOLD = 20;
-        const splitIndex = Math.max(0, layerLines.length - THRESHOLD);
+        // ★ ここで定数を使う
+        const splitIndex = Math.max(0, layerLines.length - CACHE_THRESHOLD);
 
         const staticLines = layerLines.slice(0, splitIndex);
         const dynamicLines = layerLines.slice(splitIndex);
@@ -215,12 +216,11 @@ export const PaintCanvas = ({
             clipWidth={CANVAS_WIDTH}
             clipHeight={CANVAS_HEIGHT}
           >
-            {/* ■ 静的グループ (キャッシュされる古い線) */}
+            {/* ■ 静的グループ */}
             <Group
               ref={(node) => {
                 if (node) {
                   staticGroupRefs.current.set(layerId, node);
-                  // ★ ここで cache() を呼ぶのは削除！ (useEffectに任せる)
                 }
               }}
             >
@@ -240,7 +240,7 @@ export const PaintCanvas = ({
               ))}
             </Group>
 
-            {/* ■ 動的グループ (最新の線 + 描画中) */}
+            {/* ■ 動的グループ */}
             <Group>
               {dynamicLines.map((line) => (
                 <Line
