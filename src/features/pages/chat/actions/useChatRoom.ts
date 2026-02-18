@@ -68,7 +68,8 @@ export const useChatRoom = (
         .from("strokes")
         .select("data")
         .eq("room_id", roomId)
-        .order("created_at", { ascending: true });
+        .order("created_at", { ascending: true })
+        .limit(20000);
 
       if (strokes && canvasHandleRef.current) {
         // Konva版の drawStroke をループで呼ぶ
