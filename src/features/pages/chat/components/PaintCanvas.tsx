@@ -108,26 +108,33 @@ export const PaintCanvas = ({
 
 
   const handleMouseDownWrapped = (e: any) => {
+    // ■ スポイト処理 (画面のDOMから直接色を抜く最強版)
     if (toolMode === "pipette") {
       const stage = stageRef.current;
       if (!stage) return;
+      
       const pointerPos = stage.getPointerPosition();
       if (!pointerPos) return;
 
-      const transform = stage.getAbsoluteTransform().copy();
-      transform.invert();
-      const pos = transform.point(pointerPos);
+      // デバイスのピクセル比（Retinaディスプレイ等の高画質ズレを補正）
+      const ratio = window.devicePixelRatio || 1;
+      const targetX = pointerPos.x * ratio;
+      const targetY = pointerPos.y * ratio;
 
-      const pixelCanvas = stage.toCanvas({
-        x: pos.x,
-        y: pos.y,
-        width: 1,
-        height: 1,
-        pixelRatio: 1,
-      });
+      // 1x1ピクセルの作業用キャンバスをメモリ上に作る
+      const tempCanvas = document.createElement("canvas");
+      tempCanvas.width = 1;
+      tempCanvas.height = 1;
+      const ctx = tempCanvas.getContext("2d");
 
-      const ctx = pixelCanvas.getContext("2d");
       if (ctx) {
+        // ステージ上の全レイヤーのHTML <canvas> 要素を順番に重ねていく
+        stage.getLayers().forEach((layer) => {
+          const nativeCanvas = layer.getNativeCanvasElement();
+          // ブラウザに表示されているCanvasから、マウス位置の1pxだけをコピー
+          ctx.drawImage(nativeCanvas, targetX, targetY, 1, 1, 0, 0, 1, 1);
+        });
+
         const p = ctx.getImageData(0, 0, 1, 1).data;
         const hex = rgbToHex(p[0], p[1], p[2]);
         onColorPick?.(hex);

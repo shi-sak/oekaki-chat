@@ -1,5 +1,3 @@
-// src/lib/useKonva.ts
-
 import { useState, useRef } from "react";
 import Konva from "konva";
 import { KonvaEventObject } from "konva/lib/Node";
@@ -30,20 +28,8 @@ export const useKonva = ({
   const handleMouseDown = (e: KonvaEventObject<MouseEvent | TouchEvent>) => {
     if (toolMode === "hand" || disabled) return;
 
-    if (toolMode === "pipette") {
-      // e.target はクリックされた Konvaノード（線など）
-      const target = e.target;
-
-      // 背景(Rect)をクリックした場合は無視、線(Line)なら色取得
-      // KonvaのLineオブジェクトは attrs.stroke に色を持っています
-      if (target.className === "Line") {
-        const pickedColor = target.attrs.stroke;
-        if (pickedColor && onColorPick) {
-          onColorPick(pickedColor); // 親に色を渡す
-        }
-      }
-      return; // 描画はしないのでここで終了
-    }
+    // ※ スポイト(pipette)の処理は PaintCanvas.tsx の 
+    // handleMouseDownWrapped 側で行うようになったため、ここから削除しました。
 
     isDrawing.current = true;
     const stage = e.target.getStage();
@@ -75,6 +61,8 @@ export const useKonva = ({
         width: strokeWidth,
         tool: toolMode === "eraser" ? "eraser" : "pen",
         layerId: activeLayer,
+        // ※ もしDB送信時に created_at を付与していない場合はローカルで仮置きしてもOK
+        // created_at: new Date().toISOString(), 
       };
 
       setLines((prev) => [...prev, newStroke]); // ローカル更新
@@ -140,9 +128,25 @@ export const useKonva = ({
   };
 
   const resetCanvas = () => setLines([]);
-  const addStroke = (stroke: Stroke) => setLines((prev) => [...prev, stroke]);
 
-  
+  // ★ ここを変更！ (他人の線を受信する関数)
+  // 単に追加するだけでなく、描画前に必ず時間順(Z-index)に並び替える
+  const addStroke = (stroke: any) => {
+    setLines((prev) => {
+      const newLines = [...prev, stroke];
+      
+      // DBで付与された日時 (created_at) を基準に古い順にソートする。
+      // これにより、通信ラグで消しゴムとペンが逆転しても正しく表示される。
+      newLines.sort((a, b) => {
+        // ※プロパティ名が createdAt の場合は適宜書き換えてください
+        const timeA = new Date(a.created_at || 0).getTime();
+        const timeB = new Date(b.created_at || 0).getTime();
+        return timeA - timeB;
+      });
+      
+      return newLines;
+    });
+  };
 
   return {
     stageRef,
@@ -161,15 +165,15 @@ export const useKonva = ({
       resetCanvas,
       addStroke,
       zoomIn: () => {
-      setStageScale((prev) => Math.min(prev * 1.2, 5)); // 最大5倍
-    },
-    zoomOut: () => {
-      setStageScale((prev) => Math.max(prev / 1.2, 0.1)); // 最小0.1倍
-    },
-    resetView: () => {
-      setStageScale(1);
-      setStagePos({ x: 0, y: 0 });
-    },
+        setStageScale((prev) => Math.min(prev * 1.2, 5)); // 最大5倍
+      },
+      zoomOut: () => {
+        setStageScale((prev) => Math.max(prev / 1.2, 0.1)); // 最小0.1倍
+      },
+      resetView: () => {
+        setStageScale(1);
+        setStagePos({ x: 0, y: 0 });
+      },
     },
   };
 };
