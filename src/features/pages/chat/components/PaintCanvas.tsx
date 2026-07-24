@@ -76,31 +76,34 @@ export const PaintCanvas = ({
       });
 
       // 現在の線から、「50の倍数」になるように計算する
-      // 例: 123本なら -> 100本が静的(キャッシュ)に回る
       const staticCount = Math.floor(layerLines.length / CHUNK_SIZE) * CHUNK_SIZE;
       const lastCachedCount = cachedCountsRef.current.get(layerId) || 0;
 
-      // ★ 50の倍数をまたいだ瞬間（キャッシュすべき線が増えた時）だけ更新！
-      if (staticCount > 0 && staticCount > lastCachedCount) {
+      // ★ 修正: > から !== に変更。増えた時だけでなく、減った時(リセット時)にも対応
+      if (staticCount !== lastCachedCount) {
         const group = staticGroupRefs.current.get(layerId);
         if (group) {
-          // 1. まず即座にキャッシュを剥がしてチラつきを防ぐ
+          // 1. まず確実にキャッシュを剥がす（前の部屋の残像を消す）
           group.clearCache();
           
-          // 2. ほんの少し待ってから再キャッシュ
-          setTimeout(() => {
-            try {
-              group.cache({
-                pixelRatio: 3,
-                x: 0,
-                y: 0,
-                width: CANVAS_WIDTH,
-                height: CANVAS_HEIGHT,
-              });
-              // キャッシュ完了した本数を記録
-              cachedCountsRef.current.set(layerId, staticCount);
-            } catch (e) {}
-          }, 50);
+          if (staticCount > 0) {
+            // 2. 50本以上ある場合は再キャッシュ
+            setTimeout(() => {
+              try {
+                group.cache({
+                  pixelRatio: 1,
+                  x: 0,
+                  y: 0,
+                  width: CANVAS_WIDTH,
+                  height: CANVAS_HEIGHT,
+                });
+                cachedCountsRef.current.set(layerId, staticCount);
+              } catch (e) {}
+            }, 100);
+          } else {
+            // 3. 0本になった場合（部屋移動・リセットなど）はカウントを0に戻す
+            cachedCountsRef.current.set(layerId, 0);
+          }
         }
       }
     });
@@ -192,7 +195,13 @@ export const PaintCanvas = ({
       // 終わったら戻す
       staticGroupRefs.current.forEach((group) => {
         try {
-          group.cache({ pixelRatio: 3, x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
+          group.cache({ 
+            pixelRatio: 1, // ★ここも 3 から 1 に下げる！
+            x: 0, 
+            y: 0, 
+            width: CANVAS_WIDTH, 
+            height: CANVAS_HEIGHT 
+          });
         } catch (e) {}
       });
 
