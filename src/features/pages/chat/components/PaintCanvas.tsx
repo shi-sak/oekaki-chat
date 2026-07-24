@@ -1,6 +1,6 @@
 "use client";
 
-import { useImperativeHandle, Ref, useRef } from "react";
+import { useImperativeHandle, Ref, useRef, useEffect } from "react";
 import { Stage, Layer, Line, Rect, Group } from "react-konva";
 import Konva from "konva";
 import {
@@ -12,8 +12,7 @@ import {
 import { useKonva } from "@/features/pages/chat/actions/useKonva";
 import { useRoomContext } from "../contexts/RoomContext";
 
-// ★ 1ブロックあたりの線の数 (50本ごとに画像化して固める)
-const CHUNK_SIZE = 50;
+const CHUNK_SIZE = 50; // ★ 50本たまったら一気にキャッシュを更新する
 
 export interface PaintCanvasHandle {
   drawStroke: (stroke: any) => void;
@@ -41,6 +40,11 @@ export const PaintCanvas = ({
   const { onSaveStroke } = useRoomContext();
   const isDrawingRef = useRef(false);
 
+  const layerRefs = useRef<Map<number, Konva.Layer>>(new Map());
+  const staticGroupRefs = useRef<Map<number, Konva.Group>>(new Map());
+  // ★ 各レイヤーが「何本目までキャッシュしたか」を記憶するRef
+  const cachedCountsRef = useRef<Map<number, number>>(new Map());
+
   const {
     stageRef,
     lines,
@@ -59,25 +63,61 @@ export const PaintCanvas = ({
     disabled,
   });
 
-  // ズームやスクロールをしていても、正確に色を拾う関数
   const rgbToHex = (r: number, g: number, b: number) => {
     return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
   };
 
+  // ■ かしこいキャッシュ管理エフェクト
+  useEffect(() => {
+    LAYER_RENDER_ORDER.forEach((layerId) => {
+      const layerLines = lines.filter((l) => {
+        if (layerId === 1) return l.layerId === 1 || !l.layerId;
+        return l.layerId === layerId;
+      });
+
+      // 現在の線から、「50の倍数」になるように計算する
+      // 例: 123本なら -> 100本が静的(キャッシュ)に回る
+      const staticCount = Math.floor(layerLines.length / CHUNK_SIZE) * CHUNK_SIZE;
+      const lastCachedCount = cachedCountsRef.current.get(layerId) || 0;
+
+      // ★ 50の倍数をまたいだ瞬間（キャッシュすべき線が増えた時）だけ更新！
+      if (staticCount > 0 && staticCount > lastCachedCount) {
+        const group = staticGroupRefs.current.get(layerId);
+        if (group) {
+          // 1. まず即座にキャッシュを剥がしてチラつきを防ぐ
+          group.clearCache();
+          
+          // 2. ほんの少し待ってから再キャッシュ
+          setTimeout(() => {
+            try {
+              group.cache({
+                pixelRatio: 3,
+                x: 0,
+                y: 0,
+                width: CANVAS_WIDTH,
+                height: CANVAS_HEIGHT,
+              });
+              // キャッシュ完了した本数を記録
+              cachedCountsRef.current.set(layerId, staticCount);
+            } catch (e) {}
+          }, 50);
+        }
+      }
+    });
+  }, [lines]);
+
+
   const handleMouseDownWrapped = (e: any) => {
-    // ■ スポイト処理 (ズーム対応版)
     if (toolMode === "pipette") {
       const stage = stageRef.current;
       if (!stage) return;
       const pointerPos = stage.getPointerPosition();
       if (!pointerPos) return;
 
-      // 画面上の座標を、キャンバス内の絶対座標に変換
       const transform = stage.getAbsoluteTransform().copy();
       transform.invert();
       const pos = transform.point(pointerPos);
 
-      // その1ピクセルだけを切り出して色を取得
       const pixelCanvas = stage.toCanvas({
         x: pos.x,
         y: pos.y,
@@ -119,14 +159,13 @@ export const PaintCanvas = ({
       const stage = stageRef.current;
       if (!stage) return null;
 
-      // 状態退避
       const oldScale = stage.scaleX();
       const oldPos = stage.position();
       stage.scale({ x: 1, y: 1 });
       stage.position({ x: 0, y: 0 });
 
-      // 書き出し用の高画質化は、今のチャンク構造なら「特に何もしなくても」
-      // Konvaが勝手にやってくれるので、キャッシュ解除ループは不要です！
+      // 書き出し前はキャッシュを剥がす
+      staticGroupRefs.current.forEach((group) => group.clearCache());
 
       const TARGET_WIDTH = 300;
       const ratio = TARGET_WIDTH / CANVAS_WIDTH;
@@ -140,9 +179,15 @@ export const PaintCanvas = ({
         pixelRatio,
       });
 
-      // 復帰
       stage.scale({ x: oldScale, y: oldScale });
       stage.position(oldPos);
+
+      // 終わったら戻す
+      staticGroupRefs.current.forEach((group) => {
+        try {
+          group.cache({ pixelRatio: 3, x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
+        } catch (e) {}
+      });
 
       return new Promise((resolve) => {
         tempCanvas.toBlob(
@@ -193,18 +238,15 @@ export const PaintCanvas = ({
       </Layer>
 
       {LAYER_RENDER_ORDER.map((layerId) => {
-        // 1. このレイヤーの全線を取得
         const layerLines = lines.filter((l) => {
           if (layerId === 1) return l.layerId === 1 || !l.layerId;
           return l.layerId === layerId;
         });
 
-        // 2. 線を「チャンク(50本の束)」に分割する
-        // 例: 120本 -> [50本, 50本, 20本] の3つのグループになる
-        const chunks = [];
-        for (let i = 0; i < layerLines.length; i += CHUNK_SIZE) {
-          chunks.push(layerLines.slice(i, i + CHUNK_SIZE));
-        }
+        // ★ 50の倍数で分割！
+        const staticCount = Math.floor(layerLines.length / CHUNK_SIZE) * CHUNK_SIZE;
+        const staticLines = layerLines.slice(0, staticCount);
+        const dynamicLines = layerLines.slice(staticCount);
 
         const isDrawingOnThisLayer =
           activeLayer === layerId && currentPoints.length > 0;
@@ -212,70 +254,69 @@ export const PaintCanvas = ({
         return (
           <Layer
             key={layerId}
+            ref={(node) => {
+              if (node) layerRefs.current.set(layerId, node);
+            }}
             clipX={0}
             clipY={0}
             clipWidth={CANVAS_WIDTH}
             clipHeight={CANVAS_HEIGHT}
           >
-            {/* ■ チャンクごとの描画 */}
-            {chunks.map((chunkLines, i) => {
-              const isLastChunk = i === chunks.length - 1;
-
-              return (
-                <Group
-                  key={i}
-                  ref={(node) => {
-                    // ★ 最後のチャンク以外は「即キャッシュ」して固定！
-                    // isLastChunk が false になった瞬間（次の束ができた瞬間）に
-                    // 自動的にキャッシュされるので、useEffect等の管理は不要です。
-                    if (node && !isLastChunk) {
-                      // まだキャッシュされてない時だけ実行
-                      if (!node.isCached()) {
-                        node.cache({
-                          pixelRatio: 3, // iPad用高画質
-                          x: 0,
-                          y: 0,
-                          width: CANVAS_WIDTH,
-                          height: CANVAS_HEIGHT,
-                        });
-                      }
-                    }
-                  }}
-                >
-                  {chunkLines.map((line) => (
-                    <Line
-                      key={line.id}
-                      points={line.points}
-                      strokeWidth={line.width}
-                      stroke={line.tool === "eraser" ? "black" : line.color}
-                      globalCompositeOperation={
-                        line.tool === "eraser"
-                          ? "destination-out"
-                          : "source-over"
-                      }
-                      tension={0.5}
-                      lineCap="round"
-                      lineJoin="round"
-                    />
-                  ))}
-                </Group>
-              );
-            })}
-
-            {/* ■ 今描いている最中の線 (常に最前面) */}
-            {isDrawingOnThisLayer && (
-              <Line
-                points={currentPoints}
-                stroke={toolMode === "eraser" ? "black" : strokeColor}
-                strokeWidth={strokeWidth}
-                globalCompositeOperation={
-                  toolMode === "eraser" ? "destination-out" : "source-over"
+            {/* ■ 静的グループ (1つの巨大グループに戻す！) */}
+            <Group
+              ref={(node) => {
+                if (node) {
+                  staticGroupRefs.current.set(layerId, node);
                 }
-                tension={0.5}
-                lineCap="round"
-                lineJoin="round"
-              />
-            )}
+              }}
+            >
+              {staticLines.map((line) => (
+                <Line
+                  key={line.id}
+                  points={line.points}
+                  strokeWidth={line.width}
+                  stroke={line.tool === "eraser" ? "black" : line.color}
+                  globalCompositeOperation={
+                    line.tool === "eraser" ? "destination-out" : "source-over"
+                  }
+                  tension={0.5}
+                  lineCap="round"
+                  lineJoin="round"
+                />
+              ))}
+            </Group>
+
+            {/* ■ 動的グループ (最大50本) */}
+            <Group>
+              {dynamicLines.map((line) => (
+                <Line
+                  key={line.id}
+                  points={line.points}
+                  strokeWidth={line.width}
+                  stroke={line.tool === "eraser" ? "black" : line.color}
+                  globalCompositeOperation={
+                    line.tool === "eraser" ? "destination-out" : "source-over"
+                  }
+                  tension={0.5}
+                  lineCap="round"
+                  lineJoin="round"
+                />
+              ))}
+
+              {isDrawingOnThisLayer && (
+                <Line
+                  points={currentPoints}
+                  stroke={toolMode === "eraser" ? "black" : strokeColor}
+                  strokeWidth={strokeWidth}
+                  globalCompositeOperation={
+                    toolMode === "eraser" ? "destination-out" : "source-over"
+                  }
+                  tension={0.5}
+                  lineCap="round"
+                  lineJoin="round"
+                />
+              )}
+            </Group>
           </Layer>
         );
       })}

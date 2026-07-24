@@ -155,7 +155,7 @@ export const useChatRoom = (
     // DBに保存
     await supabase.from("strokes").insert({
       room_id: parseInt(roomId),
-      data: stroke, // JSONとしてそのまま入ります
+      data: stroke, // JSONとしてそのまま入る
       user_id: user.id,
       user_name: user.name,
     });
