@@ -1,6 +1,15 @@
 "use client";
 
-import { useImperativeHandle, Ref, useRef, useEffect } from "react";
+import {
+  useImperativeHandle,
+  Ref,
+  useRef,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useCallback,
+  memo,
+} from "react";
 import { Stage, Layer, Line, Rect, Group } from "react-konva";
 import Konva from "konva";
 import {
@@ -8,14 +17,43 @@ import {
   CANVAS_HEIGHT,
   LAYER_RENDER_ORDER,
   CommonCanvasProps,
+  Stroke,
 } from "@/constants/canvas";
 import { useKonva } from "@/features/pages/chat/actions/useKonva";
 import { useRoomContext } from "../contexts/RoomContext";
 
 const CHUNK_SIZE = 50; // ★ 50本たまったら一気にキャッシュを更新する
 
+// キャッシュ1枚あたりの最大ピクセル数（iOS Safari の canvas 上限 ≒ 16.7M px に収める）
+const MAX_CACHE_PIXELS = 16_000_000;
+// ズーム・パン後、操作が止まってから再キャッシュするまでの待ち時間
+const RECACHE_DELAY_MS = 150;
+
+// 確定済みの線。memo なので描画中(マウス移動ごと)の再レンダーでは何もしない
+const StrokeLines = memo(({ lines }: { lines: Stroke[] }) => (
+  <>
+    {lines.map((line) => (
+      <Line
+        key={line.id}
+        points={line.points}
+        strokeWidth={line.width}
+        stroke={line.tool === "eraser" ? "black" : line.color}
+        globalCompositeOperation={
+          line.tool === "eraser" ? "destination-out" : "source-over"
+        }
+        tension={0.5}
+        lineCap="round"
+        lineJoin="round"
+        perfectDrawEnabled={false}
+      />
+    ))}
+  </>
+));
+StrokeLines.displayName = "StrokeLines";
+
 export interface PaintCanvasHandle {
-  drawStroke: (stroke: any) => void;
+  drawStroke: (stroke: Stroke) => void;
+  drawStrokes: (strokes: Stroke[]) => void;
   resetCanvas: () => void;
   exportImageBlob: (type?: "png" | "webp") => Promise<Blob | null>;
   getStrokeCount: () => number;
@@ -37,13 +75,11 @@ export const PaintCanvas = ({
   activeLayer,
   disabled = false,
 }: Props) => {
-  const { onSaveStroke } = useRoomContext();
+  const { onSaveStroke, onCanvasReady } = useRoomContext();
   const isDrawingRef = useRef(false);
 
   const layerRefs = useRef<Map<number, Konva.Layer>>(new Map());
   const staticGroupRefs = useRef<Map<number, Konva.Group>>(new Map());
-  // ★ 各レイヤーが「何本目までキャッシュしたか」を記憶するRef
-  const cachedCountsRef = useRef<Map<number, number>>(new Map());
 
   const {
     stageRef,
@@ -67,48 +103,84 @@ export const PaintCanvas = ({
     return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
   };
 
-  // ■ かしこいキャッシュ管理エフェクト
-  useEffect(() => {
+  // レイヤーごとに「キャッシュする線(50本単位)」と「まだキャッシュしない線」に分ける
+  const splitLines = useMemo(() => {
+    const map = new Map<number, { staticLines: Stroke[]; dynamicLines: Stroke[] }>();
     LAYER_RENDER_ORDER.forEach((layerId) => {
       const layerLines = lines.filter((l) => {
         if (layerId === 1) return l.layerId === 1 || !l.layerId;
         return l.layerId === layerId;
       });
-
-      // 現在の線から、「50の倍数」になるように計算する
       const staticCount = Math.floor(layerLines.length / CHUNK_SIZE) * CHUNK_SIZE;
-      const lastCachedCount = cachedCountsRef.current.get(layerId) || 0;
-
-      // ★ 修正: > から !== に変更。増えた時だけでなく、減った時(リセット時)にも対応
-      if (staticCount !== lastCachedCount) {
-        const group = staticGroupRefs.current.get(layerId);
-        if (group) {
-          // 1. まず確実にキャッシュを剥がす（前の部屋の残像を消す）
-          group.clearCache();
-          
-          if (staticCount > 0) {
-            // 2. 50本以上ある場合は再キャッシュ
-            setTimeout(() => {
-              try {
-                group.cache({
-                  pixelRatio: 1,
-                  x: 0,
-                  y: 0,
-                  width: CANVAS_WIDTH,
-                  height: CANVAS_HEIGHT,
-                });
-                cachedCountsRef.current.set(layerId, staticCount);
-              } catch (e) {}
-            }, 100);
-          } else {
-            // 3. 0本になった場合（部屋移動・リセットなど）はカウントを0に戻す
-            cachedCountsRef.current.set(layerId, 0);
-          }
-        }
-      }
+      map.set(layerId, {
+        staticLines: layerLines.slice(0, staticCount),
+        dynamicLines: layerLines.slice(staticCount),
+      });
     });
+    return map;
   }, [lines]);
 
+  // ■ 静的グループを「今見えている範囲(+余白)」だけ「画面の解像度」でキャッシュする
+  //   固定 pixelRatio:1 だとズーム時・Retina で引き伸ばされて荒くなるため
+  const recache = useCallback(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    const scale = stage.scaleX();
+    const viewW = stage.width() / scale;
+    const viewH = stage.height() / scale;
+    const viewX = -stage.x() / scale;
+    const viewY = -stage.y() / scale;
+
+    // パンしてもすぐ空白にならないよう、上下左右に画面半分ずつ余白をとる
+    const x = Math.max(0, Math.floor(viewX - viewW / 2));
+    const y = Math.max(0, Math.floor(viewY - viewH / 2));
+    const right = Math.min(CANVAS_WIDTH, Math.ceil(viewX + viewW * 1.5));
+    const bottom = Math.min(CANVAS_HEIGHT, Math.ceil(viewY + viewH * 1.5));
+    const width = right - x;
+    const height = bottom - y;
+    if (width <= 0 || height <= 0) return; // キャンバスが画面外
+
+    const idealRatio = scale * (window.devicePixelRatio || 1);
+    const maxRatio = Math.sqrt(MAX_CACHE_PIXELS / (width * height));
+    const pixelRatio = Math.min(idealRatio, maxRatio);
+
+    staticGroupRefs.current.forEach((group, layerId) => {
+      if ((splitLines.get(layerId)?.staticLines.length ?? 0) === 0) {
+        group.clearCache();
+        return;
+      }
+      try {
+        group.cache({ x, y, width, height, pixelRatio });
+      } catch (e) {}
+    });
+  }, [splitLines, stageRef]);
+
+  // 50本たまった / リセットされた時は、次の描画より前に再キャッシュ（一瞬線が消えるのを防ぐ）
+  const cacheKey = LAYER_RENDER_ORDER.map((id) => {
+    const st = splitLines.get(id)?.staticLines ?? [];
+    return `${st.length}:${st[st.length - 1]?.id ?? ""}`;
+  }).join("|");
+  useLayoutEffect(() => {
+    recache();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cacheKey]);
+
+  // ズーム・パンは操作が落ち着いてから再キャッシュ（それまでは古いキャッシュを拡縮表示）
+  const recacheTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleRecache = useCallback(() => {
+    if (recacheTimerRef.current) clearTimeout(recacheTimerRef.current);
+    recacheTimerRef.current = setTimeout(recache, RECACHE_DELAY_MS);
+  }, [recache]);
+  useEffect(() => {
+    scheduleRecache();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stageScale, stagePos]);
+  useEffect(() => {
+    return () => {
+      if (recacheTimerRef.current) clearTimeout(recacheTimerRef.current);
+    };
+  }, []);
 
   const handleMouseDownWrapped = (e: any) => {
     // ■ スポイト処理 (画面のDOMから直接色を抜く最強版)
@@ -154,8 +226,28 @@ export const PaintCanvas = ({
     handlers.handleMouseUp();
   };
 
+  // ■ キャンバスの外でボタンを離しても、ちゃんと線を確定させる
+  //   (Konva はステージの上で離した時しか mouseup を受け取らないため、window で拾う)
+  const mouseUpRef = useRef(handleMouseUpWrapped);
+  useEffect(() => {
+    mouseUpRef.current = handleMouseUpWrapped;
+  });
+  useEffect(() => {
+    const handleWindowMouseUp = () => {
+      if (isDrawingRef.current) mouseUpRef.current();
+    };
+    window.addEventListener("mouseup", handleWindowMouseUp);
+    // 描いている途中でウィンドウが切り替わった時も確定させる
+    window.addEventListener("blur", handleWindowMouseUp);
+    return () => {
+      window.removeEventListener("mouseup", handleWindowMouseUp);
+      window.removeEventListener("blur", handleWindowMouseUp);
+    };
+  }, []);
+
   useImperativeHandle(ref, () => ({
     drawStroke: actions.addStroke,
+    drawStrokes: actions.addStrokes,
     resetCanvas: actions.resetCanvas,
     getStrokeCount: () => lines.length,
     zoomIn: actions.zoomIn,
@@ -163,7 +255,8 @@ export const PaintCanvas = ({
     resetView: actions.resetView,
 
     exportImageBlob: async (type: "png" | "webp" = "webp") => {
-      while (isDrawingRef.current) {
+      // 描いている途中なら書き終わるまで待つ (止まったままにならないよう最大5秒)
+      for (let i = 0; i < 50 && isDrawingRef.current; i++) {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       const stage = stageRef.current;
@@ -193,17 +286,7 @@ export const PaintCanvas = ({
       stage.position(oldPos);
 
       // 終わったら戻す
-      staticGroupRefs.current.forEach((group) => {
-        try {
-          group.cache({ 
-            pixelRatio: 1, // ★ここも 3 から 1 に下げる！
-            x: 0, 
-            y: 0, 
-            width: CANVAS_WIDTH, 
-            height: CANVAS_HEIGHT 
-          });
-        } catch (e) {}
-      });
+      recache();
 
       return new Promise((resolve) => {
         tempCanvas.toBlob(
@@ -215,6 +298,11 @@ export const PaintCanvas = ({
     },
   }));
 
+  // 準備ができたことを親に知らせる (読み込み中に届いた線をここで描いてもらう)
+  useEffect(() => {
+    onCanvasReady();
+  }, [onCanvasReady]);
+
   const CIRCLE_CURSOR = `url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='7' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9' fill='%23ffffff' stroke='%23000000' stroke-width='2'/%3E%3C/svg%3E") 12 12, crosshair`;
 
   return (
@@ -224,6 +312,7 @@ export const PaintCanvas = ({
       height={600}
       draggable={toolMode === "hand"}
       onWheel={handlers.handleWheel}
+      onDragEnd={scheduleRecache}
       scaleX={stageScale}
       scaleY={stageScale}
       x={stagePos.x}
@@ -254,15 +343,7 @@ export const PaintCanvas = ({
       </Layer>
 
       {LAYER_RENDER_ORDER.map((layerId) => {
-        const layerLines = lines.filter((l) => {
-          if (layerId === 1) return l.layerId === 1 || !l.layerId;
-          return l.layerId === layerId;
-        });
-
-        // ★ 50の倍数で分割！
-        const staticCount = Math.floor(layerLines.length / CHUNK_SIZE) * CHUNK_SIZE;
-        const staticLines = layerLines.slice(0, staticCount);
-        const dynamicLines = layerLines.slice(staticCount);
+        const { staticLines, dynamicLines } = splitLines.get(layerId)!;
 
         const isDrawingOnThisLayer =
           activeLayer === layerId && currentPoints.length > 0;
@@ -273,12 +354,14 @@ export const PaintCanvas = ({
             ref={(node) => {
               if (node) layerRefs.current.set(layerId, node);
             }}
+            // 線はクリック判定に使わないので、ヒット判定用の描画を省いて軽くする
+            listening={false}
             clipX={0}
             clipY={0}
             clipWidth={CANVAS_WIDTH}
             clipHeight={CANVAS_HEIGHT}
           >
-            {/* ■ 静的グループ (1つの巨大グループに戻す！) */}
+            {/* ■ 静的グループ (50本単位でキャッシュされる) */}
             <Group
               ref={(node) => {
                 if (node) {
@@ -286,38 +369,12 @@ export const PaintCanvas = ({
                 }
               }}
             >
-              {staticLines.map((line) => (
-                <Line
-                  key={line.id}
-                  points={line.points}
-                  strokeWidth={line.width}
-                  stroke={line.tool === "eraser" ? "black" : line.color}
-                  globalCompositeOperation={
-                    line.tool === "eraser" ? "destination-out" : "source-over"
-                  }
-                  tension={0.5}
-                  lineCap="round"
-                  lineJoin="round"
-                />
-              ))}
+              <StrokeLines lines={staticLines} />
             </Group>
 
             {/* ■ 動的グループ (最大50本) */}
             <Group>
-              {dynamicLines.map((line) => (
-                <Line
-                  key={line.id}
-                  points={line.points}
-                  strokeWidth={line.width}
-                  stroke={line.tool === "eraser" ? "black" : line.color}
-                  globalCompositeOperation={
-                    line.tool === "eraser" ? "destination-out" : "source-over"
-                  }
-                  tension={0.5}
-                  lineCap="round"
-                  lineJoin="round"
-                />
-              ))}
+              <StrokeLines lines={dynamicLines} />
 
               {isDrawingOnThisLayer && (
                 <Line

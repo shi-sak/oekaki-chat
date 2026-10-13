@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { supabase } from "@/lib/supabase/client";
 
 import { Stroke } from "@/constants/canvas";
@@ -34,6 +34,10 @@ export type ChatMessage = {
   timestamp: number;
 };
 
+// 部屋にいる人の中から代表者(リーダー)を1人決める
+// (全員が同じ人を選ぶように、IDの並び順で決める)
+const pickLeaderId = (users: User[]) => users.map((u) => u.id).sort()[0];
+
 export const useChatRoom = (
   roomId: string,
   user: User | null,
@@ -45,11 +49,54 @@ export const useChatRoom = (
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isReady, setIsReady] = useState(false); // 初期化完了フラグ
 
+  // ■ キャンバスへの線の受け渡し
+  // キャンバス(PaintCanvas)は遅れて読み込まれるので、準備前に届いた線はここに溜めておく
+  const pendingStrokesRef = useRef<Stroke[]>([]);
+
+  const deliverStrokes = useCallback(
+    (strokes: Stroke[]) => {
+      const canvas = canvasHandleRef.current;
+      if (canvas) {
+        canvas.drawStrokes(strokes);
+      } else {
+        pendingStrokesRef.current = pendingStrokesRef.current.concat(strokes);
+      }
+    },
+    [canvasHandleRef],
+  );
+
+  // キャンバスの準備ができたら呼ばれる (溜まっていた線をまとめて描く)
+  const onCanvasReady = useCallback(() => {
+    const pending = pendingStrokesRef.current;
+    if (pending.length === 0) return;
+    pendingStrokesRef.current = [];
+    canvasHandleRef.current?.drawStrokes(pending);
+  }, [canvasHandleRef]);
+
   // ■ 初期化 & リアルタイム接続
   useEffect(() => {
     if (!roomId || !user) return;
 
+    let cancelled = false;
     const channel = supabase.channel(`room:${roomId}`);
+
+    // 過去の線を読み終わるまで、リアルタイムで届いた線はここで待たせる
+    // (先に届いた新しい線が、あとから読んだ古い線の下に描かれないように)
+    let historyLoaded = false;
+    const queuedStrokes: Stroke[] = [];
+    // 履歴とリアルタイムの両方で同じ線が届くことがあるので、IDで重複を除く
+    const seenIds = new Set<string>();
+    const receiveStrokes = (strokes: Stroke[]) => {
+      const fresh = strokes.filter((s) => !seenIds.has(s.id));
+      fresh.forEach((s) => seenIds.add(s.id));
+      if (fresh.length > 0) deliverStrokes(fresh);
+    };
+
+    // 購読が始まったら解決する (過去の線の取得はこれを待つ)
+    let markSubscribed = () => {};
+    const subscribed = new Promise<void>((resolve) => {
+      markSubscribed = resolve;
+    });
 
     // 1. 部屋の初期情報を取得
     const fetchRoom = async () => {
@@ -57,26 +104,27 @@ export const useChatRoom = (
         .from("rooms")
         .select("*")
         .eq("id", roomId)
-        .single();
-      if (data) setRoomInfo(data);
-      if (!data.is_active) {
-        setIsReady(true);
-        return;
-      }
-      // 過去の線（今のセッション分）を取得して描画
-      const { data: strokes } = await supabase
-        .from("strokes")
-        .select("data")
-        .eq("room_id", roomId)
-        .order("created_at", { ascending: true })
-        .limit(20000);
+        .maybeSingle();
+      if (cancelled || !data) return;
+      setRoomInfo(data);
 
-      if (strokes && canvasHandleRef.current) {
-        // Konva版の drawStroke をループで呼ぶ
-        strokes.forEach((s) =>
-          canvasHandleRef.current?.drawStroke(s.data as Stroke),
-        );
+      if (data.is_active) {
+        // 過去の線（今のセッション分）を取得
+        // 購読開始を待ってから取ることで、取得〜購読開始の間に描かれた線も取りこぼさない
+        await subscribed;
+        const { data: strokes } = await supabase
+          .from("strokes")
+          .select("data")
+          .eq("room_id", roomId)
+          .order("created_at", { ascending: true })
+          .limit(20000);
+        if (cancelled) return;
+        receiveStrokes((strokes ?? []).map((s) => s.data as Stroke));
       }
+
+      // 待たせていた線を、過去の線のあとに描く
+      historyLoaded = true;
+      receiveStrokes(queuedStrokes.splice(0));
       setIsReady(true);
     };
 
@@ -94,10 +142,14 @@ export const useChatRoom = (
           filter: `room_id=eq.${roomId}`,
         },
         (payload) => {
-          // 自分が描いた線じゃなければ描画
-          if (payload.new.user_id !== user.id) {
-            // ✅ 型アサーションを Stroke に変更
-            canvasHandleRef.current?.drawStroke(payload.new.data as Stroke);
+          // 自分が描いた線は手元で描画済み
+          if (payload.new.user_id === user.id) return;
+
+          const stroke = payload.new.data as Stroke;
+          if (historyLoaded) {
+            receiveStrokes([stroke]);
+          } else {
+            queuedStrokes.push(stroke);
           }
         },
       )
@@ -116,6 +168,8 @@ export const useChatRoom = (
           // もし is_active が false になったら（終了したら）、キャンバスをクリア
           if (payload.new.is_active === false) {
             canvasHandleRef.current?.resetCanvas();
+            pendingStrokesRef.current = [];
+            seenIds.clear();
             setChatMessages([]); // チャットもクリア
           }
         },
@@ -132,19 +186,24 @@ export const useChatRoom = (
       })
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
+          markSubscribed();
           // 入室を通知
           await channel.track({
             id: user.id,
             name: user.name,
             online_at: new Date().toISOString(),
           });
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          // 購読に失敗しても、過去の線だけは読み込む
+          markSubscribed();
         }
       });
 
     return () => {
+      cancelled = true;
       supabase.removeChannel(channel);
     };
-  }, [roomId, user]);
+  }, [roomId, user, canvasHandleRef, deliverStrokes]);
 
   // ■ アクション関数
 
@@ -192,46 +251,35 @@ export const useChatRoom = (
   };
 
   // 4. ゲーム終了 & アーカイブ
-  const handleFinishGame = async (token: string) => {
-    if (!canvasHandleRef.current) return;
+  // (画像は呼び出し側で1回だけ作って渡す。失敗したら throw する)
+  const handleFinishGame = async (token: string, image: Blob) => {
+    // 1. サーバーから「アップロード許可証(URL)」をもらう
+    const { signedUrl, finishToken } = await getArchiveUploadUrl(
+      roomId,
+      token,
+      image.size,
+    );
 
-    try {
-      // 1. 画像バイナリを取得
-      const blob = await canvasHandleRef.current.exportImageBlob("png");
+    // 2. fetch で直接アップロード
+    const uploadRes = await fetch(signedUrl, {
+      method: "PUT",
+      body: image,
+      headers: {
+        "Content-Type": "image/png",
+        "Cache-Control": "public, max-age=31536000", //キャッシュ
+      },
+    });
 
-      // ★ 追加: blob が null ならここで止める！
-      if (!blob) {
-        throw new Error("画像の生成に失敗しました");
-      }
-
-      // 2. サーバーから「アップロード許可証(URL)」をもらう
-      const { signedUrl, publicUrl, finishToken } = await getArchiveUploadUrl(
-        roomId,
-        token,
-        blob.size, // ★ ここで安全に size にアクセスできる
-      );
-
-      // 3. fetch で直接アップロード
-      const uploadRes = await fetch(signedUrl, {
-        method: "PUT",
-        body: blob,
-        headers: {
-          "Content-Type": "image/png",
-          "Cache-Control": "public, max-age=31536000", //キャッシュ
-        },
-      });
-
-      if (!uploadRes.ok) {
-        throw new Error(`Upload failed: ${uploadRes.statusText}`);
-      }
-
-      // 4. 終了処理 (画像のURLをDBに保存)
-      await finishGame(roomId, publicUrl, finishToken);
-    } catch (e) {
-      console.error(e);
-      alert("終了処理に失敗しました；；");
+    if (!uploadRes.ok) {
+      throw new Error(`Upload failed: ${uploadRes.statusText}`);
     }
+
+    // 3. 終了処理 (画像のURLはサーバー側で決めてDBに保存する)
+    await finishGame(roomId, finishToken);
   };
+
+  // 5. 自分が代表者(リーダー)か (自動終了・サムネイル更新は代表者1人だけが行う)
+  const isLeader = !!user && pickLeaderId(onlineUsers) === user.id;
 
   //以下、サムネイル更新処理
 
@@ -260,12 +308,7 @@ export const useChatRoom = (
 
         // リーダー選出
         if (!currentUsers || currentUsers.length === 0) return;
-        const sortedUsers = [...currentUsers].sort((a, b) =>
-          a.id.localeCompare(b.id),
-        );
-        const isLeader = sortedUsers[0].id === user.id;
-
-        if (!isLeader) return;
+        if (pickLeaderId(currentUsers) !== user.id) return;
 
         // --- サボり判定 & アップロード (ここはそのまま) ---
         const currentCount = canvasHandleRef.current?.getStrokeCount() ?? 0;
@@ -303,6 +346,8 @@ export const useChatRoom = (
     roomInfo,
     onlineUsers,
     chatMessages,
+    isLeader,
+    onCanvasReady,
     onSaveStroke,
     sendChatMessage,
     handleStartGame,

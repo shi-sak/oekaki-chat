@@ -10,11 +10,18 @@ type Props = {
   roomId: string;
   roomInfo: Room | null;
   onStart: (token: string) => Promise<void>;
-  // ★ 型変更: 自動フラグを受け取れるようにする
-  onFinish: (token: string, isAuto?: boolean) => Promise<void>;
+  onFinish: (token: string) => Promise<void>;
+  // 制限時間になった時に呼ばれる (終了処理は親が代表者1人だけで行う)
+  onTimeUp: () => void;
 };
 
-export const RoomHeader = ({ roomId, roomInfo, onStart, onFinish }: Props) => {
+export const RoomHeader = ({
+  roomId,
+  roomInfo,
+  onStart,
+  onFinish,
+  onTimeUp,
+}: Props) => {
   const isActive = roomInfo?.is_active;
 
   // 認証中かどうか
@@ -62,13 +69,8 @@ export const RoomHeader = ({ roomId, roomInfo, onStart, onFinish }: Props) => {
       if (totalSeconds >= limitSeconds && !hasAutoFinishedRef.current) {
         hasAutoFinishedRef.current = true; // 2回実行されないようにガード
 
-        // アラート表示
-        alert(
-          `制限時間の${ROOM_LIMIT_MINUTES}分が経過しました。終了処理を行います。`,
-        );
-
-        // 親のWrapperを叩く (tokenは空文字、isAuto=true)
-        onFinish("", true);
+        // 親に知らせる (alert は処理を止めてしまうので使わない)
+        onTimeUp();
       }
     };
 
@@ -79,7 +81,7 @@ export const RoomHeader = ({ roomId, roomInfo, onStart, onFinish }: Props) => {
     const interval = setInterval(calculateTime, 1000);
 
     return () => clearInterval(interval);
-  }, [isActive, roomInfo?.session_start_at, onFinish]);
+  }, [isActive, roomInfo?.session_start_at, onTimeUp]);
 
   // --------------------------------------------------------
   // アクションハンドラ

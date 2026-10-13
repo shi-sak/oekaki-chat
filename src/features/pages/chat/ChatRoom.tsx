@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useEffect, useMemo } from "react";
+import { useRef, useState, useEffect, useMemo, useCallback } from "react";
 import { useChatRoom, User, ChatMessage } from "./actions/useChatRoom"; // ChatMessageを追加
 
 import { useRouter } from "next/navigation";
@@ -15,6 +15,7 @@ import { SidePanel } from "./components/SidePanel";
 import { Archive } from "./components/Archive";
 import { ResultModal } from "./components/ResultModal";
 import { ChatToast } from "./components/ChatToast"; // ★追加
+import { ROOM_LIMIT_MINUTES } from "@/constants/canvas";
 
 export const ChatRoom = ({ roomId }: { roomId: string }) => {
   //ユーザ情報
@@ -36,10 +37,23 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
     onSaveStroke,
     onlineUsers,
     chatMessages,
+    isLeader,
+    onCanvasReady,
     sendChatMessage,
     handleStartGame,
     handleFinishGame,
   } = useChatRoom(roomId, currentUser, canvasHandleRef);
+
+  // ★ トーストを4秒表示する
+  const showToast = useCallback((msg: ChatMessage) => {
+    setToastMessage(msg);
+
+    // タイマーリセット & 再セット (4秒表示)
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => {
+      setToastMessage(null);
+    }, 4000);
+  }, []);
 
   // ★ チャット監視 & トースト表示ロジック
   useEffect(() => {
@@ -49,23 +63,17 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
     // 自分の発言なら何もしない
     if (lastMsg.user_id === currentUser?.id) return;
 
-    // 通知をセット
-    setToastMessage(lastMsg);
-
-    // タイマーリセット & 再セット (4秒表示)
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = setTimeout(() => {
-      setToastMessage(null);
-    }, 4000);
-  }, [chatMessages, currentUser?.id]);
+    showToast(lastMsg);
+  }, [chatMessages, currentUser?.id, showToast]);
 
   // Context
   const roomContextValue = useMemo(
     () => ({
       onSaveStroke,
       isRoomActive: roomInfo?.is_active ?? false,
+      onCanvasReady,
     }),
-    [onSaveStroke, roomInfo?.is_active],
+    [onSaveStroke, roomInfo?.is_active, onCanvasReady],
   );
 
   // ユーザー判定 (初回ロード時)
@@ -96,9 +104,9 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
     router.push("/");
   };
 
-  // ■ 終了ボタン処理 (ラッパー)
-  // RoomHeader から token を受け取って実行します
-  // ★ 第2引数 isAuto を追加
+  // ■ 終了処理 (ラッパー)
+  // 手動: RoomHeader から token を受け取って実行 / 自動: token なし (isAuto = true)
+  const isFinishingRef = useRef(false);
   const handleFinishWrapper = async (
     token: string,
     isAuto: boolean = false,
@@ -108,10 +116,12 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
       if (!confirm("終了しますか？")) return;
     }
 
-    if (!canvasHandleRef.current) return;
+    // 終了処理中に二重で走らないように
+    if (!canvasHandleRef.current || isFinishingRef.current) return;
+    isFinishingRef.current = true;
 
     try {
-      // 1. まず現在のキャンバスを画像(Blob)として取得
+      // 1. まず現在のキャンバスを画像(Blob)として取得 (この1枚をアップロードにも使う)
       const blob = await canvasHandleRef.current.exportImageBlob("png");
       if (!blob) throw new Error("画像の生成に失敗しました");
 
@@ -119,12 +129,29 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
       const previewUrl = URL.createObjectURL(blob);
       setResultImageUrl(previewUrl);
 
-      // 3. 裏側でサーバーへの保存処理を実行 (useChatRoomの関数)
-      await handleFinishGame(token);
+      // 3. 同じ画像でサーバーへの保存処理を実行 (useChatRoomの関数)
+      await handleFinishGame(token, blob);
     } catch (e) {
       console.error(e);
-      alert("終了処理中にエラーが発生しましたが、手元の画像は保存可能です。");
+      // 自動終了の失敗はアラートを出さない (DBの定期処理が部屋を閉じる)
+      if (!isAuto) {
+        alert("終了処理中にエラーが発生しましたが、手元の画像は保存可能です。");
+      }
+    } finally {
+      isFinishingRef.current = false;
     }
+  };
+
+  // ■ 制限時間になった時 (RoomHeader のタイマーから呼ばれる)
+  // 全員が同時に終了処理をするとぶつかるので、代表者(リーダー)1人だけが行う
+  const handleTimeUp = () => {
+    showToast({
+      user_id: "system",
+      user_name: "SYSTEM",
+      text: `制限時間の${ROOM_LIMIT_MINUTES}分が経過しました`,
+      timestamp: Date.now(),
+    });
+    if (isLeader) handleFinishWrapper("", true);
   };
 
   // 名前未入力なら参加画面へ
@@ -146,6 +173,7 @@ export const ChatRoom = ({ roomId }: { roomId: string }) => {
               roomInfo={roomInfo}
               onStart={handleStartGame}
               onFinish={handleFinishWrapper} // 関数を渡す
+              onTimeUp={handleTimeUp}
             />
             <CanvasSection
               canvasHandleRef={canvasHandleRef}

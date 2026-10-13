@@ -5,6 +5,7 @@ import { Stroke } from "@/constants/canvas";
 type RoomContextType = {
   onSaveStroke: (stroke: Stroke) => Promise<void>; // 線を保存する関数
   isRoomActive: boolean; // 部屋が開いてるか（書き込み許可判定用）
+  onCanvasReady: () => void; // キャンバスの準備ができた時に呼ぶ
 };
 
 // ■ Contextの作成

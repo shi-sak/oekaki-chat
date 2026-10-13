@@ -129,23 +129,14 @@ export const useKonva = ({
 
   const resetCanvas = () => setLines([]);
 
-  // ★ ここを変更！ (他人の線を受信する関数)
-  // 単に追加するだけでなく、描画前に必ず時間順(Z-index)に並び替える
-  const addStroke = (stroke: any) => {
-    setLines((prev) => {
-      const newLines = [...prev, stroke];
-      
-      // DBで付与された日時 (created_at) を基準に古い順にソートする。
-      // これにより、通信ラグで消しゴムとペンが逆転しても正しく表示される。
-      newLines.sort((a, b) => {
-        // ※プロパティ名が createdAt の場合は適宜書き換えてください
-        const timeA = new Date(a.created_at || 0).getTime();
-        const timeB = new Date(b.created_at || 0).getTime();
-        return timeA - timeB;
-      });
-      
-      return newLines;
-    });
+  // 他人の線を受信する関数（DB・Realtime の到着順 = created_at 順なのでそのまま末尾に足す）
+  const addStroke = (stroke: Stroke) => {
+    setLines((prev) => [...prev, stroke]);
+  };
+
+  // 入室時の過去ストロークなど、まとめて追加する用（1回の setState で済ませる）
+  const addStrokes = (strokes: Stroke[]) => {
+    setLines((prev) => [...prev, ...strokes]);
   };
 
   return {
@@ -164,6 +155,7 @@ export const useKonva = ({
       exportImage,
       resetCanvas,
       addStroke,
+      addStrokes,
       zoomIn: () => {
         setStageScale((prev) => Math.min(prev * 1.2, 5)); // 最大5倍
       },
